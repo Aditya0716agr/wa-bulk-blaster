@@ -1,4 +1,3 @@
-
 import { useState, useRef, useCallback } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -10,6 +9,9 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { toast } from "sonner";
 import { Send, Download, Clock, MessageSquare, Paperclip, FilePlus, FileX, AlertCircle, CheckCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import GroupMessaging from "@/components/GroupMessaging";
+import WelcomeSettings from "@/components/WelcomeSettings";
+import LabelMessaging from "@/components/LabelMessaging";
 
 // Type definitions for Chrome extension API
 declare global {
@@ -41,6 +43,7 @@ const Index = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [validatedNumbers, setValidatedNumbers] = useState<PhoneNumber[]>([]);
   const [summary, setSummary] = useState({ valid: 0, invalid: 0, duplicate: 0 });
+  const [activeTab, setActiveTab] = useState("bulk-message");
 
   // Handle file selection
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -319,10 +322,13 @@ const Index = () => {
         <h1 className="text-xl font-bold text-purple-800">WhatsApp Bulk Blaster</h1>
       </div>
 
-      <Tabs defaultValue="bulk-message" className="w-full">
-        <TabsList className="grid w-full grid-cols-3 mb-4">
-          <TabsTrigger value="bulk-message">Bulk Message</TabsTrigger>
-          <TabsTrigger value="auto-reply">Auto Reply</TabsTrigger>
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <TabsList className="grid w-full grid-cols-6 mb-4">
+          <TabsTrigger value="bulk-message">Bulk</TabsTrigger>
+          <TabsTrigger value="group-message">Groups</TabsTrigger>
+          <TabsTrigger value="label-message">Labels</TabsTrigger>
+          <TabsTrigger value="auto-reply">Reply</TabsTrigger>
+          <TabsTrigger value="welcome">Welcome</TabsTrigger>
           <TabsTrigger value="export">Export</TabsTrigger>
         </TabsList>
         
@@ -488,6 +494,16 @@ const Index = () => {
           )}
         </TabsContent>
         
+        {/* Group Message Tab */}
+        <TabsContent value="group-message">
+          <GroupMessaging />
+        </TabsContent>
+        
+        {/* Label Message Tab */}
+        <TabsContent value="label-message">
+          <LabelMessaging />
+        </TabsContent>
+        
         {/* Auto Reply Tab */}
         <TabsContent value="auto-reply">
           <Card>
@@ -534,6 +550,11 @@ const Index = () => {
               </p>
             </CardContent>
           </Card>
+        </TabsContent>
+        
+        {/* Welcome Message Tab */}
+        <TabsContent value="welcome">
+          <WelcomeSettings />
         </TabsContent>
         
         {/* Export Tab */}

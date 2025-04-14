@@ -1,14 +1,15 @@
-
 // Initialize when DOM is fully loaded
 document.addEventListener('DOMContentLoaded', init);
 
 // Global variables
 let autoReplyEnabled = false;
 let floatingButton = null;
+let welcomeMessage = "Welcome to the group! We're glad to have you here.";
 
-// Get auto-reply status from storage
-chrome.storage.local.get(['autoReplyEnabled'], (result) => {
+// Get stored settings from storage
+chrome.storage.local.get(['autoReplyEnabled', 'welcomeMessage'], (result) => {
   autoReplyEnabled = result.autoReplyEnabled || false;
+  welcomeMessage = result.welcomeMessage || welcomeMessage;
 });
 
 // Initialize content script
@@ -22,6 +23,7 @@ function init() {
     setupMessageObserver();
     setupAutoReply();
     setupInvalidNumberDetection();
+    setupGroupObserver();
   }, 5000);
 }
 
@@ -85,6 +87,73 @@ function setupMessageObserver() {
       clearInterval(checkForContainer);
     }
   }, 2000);
+}
+
+// Setup observer for new group participants
+function setupGroupObserver() {
+  // Create a mutation observer to watch for messages in group chats
+  const observer = new MutationObserver((mutations) => {
+    for (const mutation of mutations) {
+      if (mutation.addedNodes.length) {
+        // Check for join messages
+        checkForNewParticipants();
+      }
+    }
+  });
+  
+  // Periodically check for the chat container and observe it
+  const checkForContainer = setInterval(() => {
+    const chatContainer = document.querySelector('#main div.copyable-area');
+    if (chatContainer) {
+      observer.observe(chatContainer, { childList: true, subtree: true });
+      clearInterval(checkForContainer);
+    }
+  }, 2000);
+}
+
+// Check for messages indicating new participants
+function checkForNewParticipants() {
+  const messages = document.querySelectorAll('div.message-system');
+  
+  messages.forEach(message => {
+    // Skip if already processed
+    if (message.dataset.processed) return;
+    message.dataset.processed = 'true';
+    
+    const messageText = message.innerText || '';
+    
+    // Check for join messages
+    if (messageText.includes('joined using this group') || 
+        messageText.includes('added') || 
+        messageText.includes('joined')) {
+      
+      // Extract the participant name if possible
+      let participantName = '';
+      const nameMatch = messageText.match(/([^\s]+) joined|([^\s]+) was added/);
+      if (nameMatch) {
+        participantName = nameMatch[1] || nameMatch[2];
+      }
+      
+      // Check if this is a group chat
+      const isGroup = !!document.querySelector('[data-testid="group-info-drawer-subject-input"]');
+      
+      if (isGroup) {
+        // Get the stored welcome message
+        chrome.storage.local.get(['welcomeMessage'], (result) => {
+          const welcomeMsg = result.welcomeMessage || welcomeMessage;
+          
+          // Personalize welcome message if we have a name
+          const personalizedMessage = participantName ? 
+            welcomeMsg.replace('{name}', participantName) : welcomeMsg;
+          
+          // Delay sending the welcome message to make it seem natural
+          setTimeout(() => {
+            sendMessage(personalizedMessage);
+          }, 2000);
+        });
+      }
+    }
+  });
 }
 
 // Detect invalid number pages
@@ -155,6 +224,23 @@ function sendAutoReply(replyText) {
   }, 500);
 }
 
+// Generic function to send a message
+function sendMessage(messageText) {
+  // Find the message input field
+  const inputField = document.querySelector('[data-testid="compose-box-input"]');
+  if (!inputField) return;
+  
+  // Focus and fill input
+  inputField.focus();
+  document.execCommand('insertText', false, messageText);
+  
+  // Find and click send button
+  setTimeout(() => {
+    const sendButton = document.querySelector('[data-testid="send"]');
+    if (sendButton) sendButton.click();
+  }, 500);
+}
+
 // Setup auto-reply functionality
 function setupAutoReply() {
   // Listen for auto-reply toggle messages from background script
@@ -164,6 +250,14 @@ function setupAutoReply() {
       updateFloatingButton();
     } else if (message.action === "exportContacts") {
       exportContacts();
+    } else if (message.action === "getGroups") {
+      getGroups().then(sendResponse);
+      return true; // Keep message channel open for async response
+    } else if (message.action === "getBusinessLabels") {
+      getBusinessLabels().then(sendResponse);
+      return true; // Keep message channel open for async response
+    } else if (message.action === "welcomeMessageUpdated") {
+      welcomeMessage = message.welcomeMessage;
     }
     return true;
   });
@@ -205,4 +299,82 @@ function exportContacts() {
     action: "exportContactsResult",
     contacts: contacts
   });
+}
+
+// Get all WhatsApp groups
+async function getGroups() {
+  // Find all chat items
+  const chatItems = document.querySelectorAll('[data-testid="cell-frame-container"]');
+  const groups = [];
+  
+  for (const chatItem of chatItems) {
+    // Look for group indicators (multiple avatar icons or group icon)
+    const isGroup = !!chatItem.querySelector('[data-testid="group-icon"]') || 
+                    chatItem.querySelectorAll('[data-testid="default-group"]').length > 0;
+    
+    if (isGroup) {
+      const nameElement = chatItem.querySelector('[data-testid="cell-frame-title"]');
+      if (nameElement) {
+        groups.push({
+          id: chatItem.getAttribute('data-id') || Date.now() + Math.random().toString(),
+          name: nameElement.innerText,
+          element: chatItem // Store reference to click on it later
+        });
+      }
+    }
+  }
+  
+  return groups;
+}
+
+// Get business labels (WhatsApp Business only)
+async function getBusinessLabels() {
+  // Check for business label elements
+  const labels = [];
+  const labelElements = document.querySelectorAll('[data-testid="chat-labels-menu"]');
+  
+  if (labelElements.length === 0) {
+    // Not a business account or no labels
+    return { isBusinessAccount: false, labels: [] };
+  }
+  
+  // Find all labeled chats
+  const chatItems = document.querySelectorAll('[data-testid="cell-frame-container"]');
+  const labeledChats = new Map();
+  
+  for (const chatItem of chatItems) {
+    const labelIndicator = chatItem.querySelector('[data-testid="chat-label"]');
+    if (labelIndicator) {
+      const labelName = labelIndicator.getAttribute('aria-label') || 
+                        labelIndicator.getAttribute('title') ||
+                        labelIndicator.innerText || 'Unknown Label';
+                        
+      // Store by label name
+      if (!labeledChats.has(labelName)) {
+        labeledChats.set(labelName, []);
+      }
+      
+      const nameElement = chatItem.querySelector('[data-testid="cell-frame-title"]');
+      if (nameElement) {
+        labeledChats.get(labelName).push({
+          id: chatItem.getAttribute('data-id') || Date.now() + Math.random().toString(),
+          name: nameElement.innerText,
+          element: chatItem
+        });
+      }
+    }
+  }
+  
+  // Convert map to array
+  labeledChats.forEach((chats, labelName) => {
+    labels.push({
+      name: labelName,
+      chats: chats
+    });
+  });
+  
+  return { 
+    isBusinessAccount: true, 
+    labels: labels 
+  };
 }
