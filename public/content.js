@@ -21,6 +21,7 @@ function init() {
     createFloatingButton();
     setupMessageObserver();
     setupAutoReply();
+    setupInvalidNumberDetection();
   }, 5000);
 }
 
@@ -84,6 +85,30 @@ function setupMessageObserver() {
       clearInterval(checkForContainer);
     }
   }, 2000);
+}
+
+// Detect invalid number pages
+function setupInvalidNumberDetection() {
+  // If on wa.me page, check for invalid number message
+  if (window.location.href.includes('wa.me')) {
+    // Check for error message indicating number isn't on WhatsApp
+    const invalidCheck = setInterval(() => {
+      const bodyText = document.body.innerText || '';
+      if (bodyText.includes('phone number shared via link is not on WhatsApp')) {
+        // Report back to background script that number is invalid
+        chrome.runtime.sendMessage({
+          action: "invalidNumberDetected",
+          url: window.location.href
+        });
+        clearInterval(invalidCheck);
+      }
+    }, 1000);
+    
+    // Clear check after 5 seconds if not found
+    setTimeout(() => {
+      clearInterval(invalidCheck);
+    }, 5000);
+  }
 }
 
 // Check for new incoming messages
