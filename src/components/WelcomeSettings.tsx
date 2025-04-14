@@ -6,6 +6,28 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { toast } from "sonner";
 import { MessageSquare, Save } from "lucide-react";
 
+// Define Chrome types for TypeScript
+interface ChromeStorage {
+  local: {
+    get: (keys: string[], callback: (result: any) => void) => void;
+  }
+}
+
+interface ChromeRuntime {
+  sendMessage: (message: any) => void;
+}
+
+interface ChromeApi {
+  storage?: ChromeStorage;
+  runtime?: ChromeRuntime;
+}
+
+declare global {
+  interface Window {
+    chrome?: ChromeApi;
+  }
+}
+
 const WelcomeSettings = () => {
   const [welcomeMessage, setWelcomeMessage] = useState(
     "Welcome to the group, {name}! We're glad to have you here."

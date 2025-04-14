@@ -9,6 +9,31 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { toast } from "sonner";
 import { Send, Clock, Users, Paperclip, FilePlus, FileX } from "lucide-react";
 
+// Define Chrome types for TypeScript
+interface ChromeRuntimeMessage {
+  action: string;
+  results?: Array<{name: string, status: string}>;
+  [key: string]: any;
+}
+
+interface ChromeRuntime {
+  sendMessage: (message: any, callback?: (response: any) => void) => void;
+  onMessage?: {
+    addListener: (callback: (message: ChromeRuntimeMessage, sender: any, sendResponse: any) => void) => void;
+    removeListener: (callback: (message: ChromeRuntimeMessage, sender: any, sendResponse: any) => void) => void;
+  };
+}
+
+interface ChromeApi {
+  runtime?: ChromeRuntime;
+}
+
+declare global {
+  interface Window {
+    chrome?: ChromeApi;
+  }
+}
+
 interface Group {
   id: string;
   name: string;
@@ -37,9 +62,9 @@ const GroupMessaging = () => {
     fetchGroups();
     
     // Listen for results from background script
-    const messageListener = (message: any) => {
+    const messageListener = (message: ChromeRuntimeMessage) => {
       if (message.action === "groupMessageResults") {
-        setLogs(message.results);
+        setLogs(message.results || []);
         setSending(false);
       }
     };
@@ -49,7 +74,9 @@ const GroupMessaging = () => {
       
       // Cleanup listener on unmount
       return () => {
-        window.chrome.runtime.onMessage.removeListener(messageListener);
+        if (window.chrome?.runtime?.onMessage) {
+          window.chrome.runtime.onMessage.removeListener(messageListener);
+        }
       };
     }
   }, []);

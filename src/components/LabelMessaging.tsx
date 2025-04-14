@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -8,6 +7,30 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
 import { Send, Clock, Tag, Paperclip, FilePlus, FileX, MessageSquare } from "lucide-react";
+
+interface ChromeRuntimeMessage {
+  action: string;
+  results?: Array<{name: string, status: string}>;
+  [key: string]: any;
+}
+
+interface ChromeRuntime {
+  sendMessage: (message: any, callback?: (response: any) => void) => void;
+  onMessage?: {
+    addListener: (callback: (message: ChromeRuntimeMessage, sender: any, sendResponse: any) => void) => void;
+    removeListener: (callback: (message: ChromeRuntimeMessage, sender: any, sendResponse: any) => void) => void;
+  };
+}
+
+interface ChromeApi {
+  runtime?: ChromeRuntime;
+}
+
+declare global {
+  interface Window {
+    chrome?: ChromeApi;
+  }
+}
 
 interface Chat {
   id: string;
@@ -31,21 +54,18 @@ const LabelMessaging = () => {
   const [attachment, setAttachment] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Format file size
   const formatFileSize = (bytes: number): string => {
     if (bytes < 1024) return bytes + ' bytes';
     else if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
     else return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   };
 
-  // Load labels on component mount
   useEffect(() => {
     fetchLabels();
     
-    // Listen for results from background script
-    const messageListener = (message: any) => {
+    const messageListener = (message: ChromeRuntimeMessage) => {
       if (message.action === "labelMessageResults") {
-        setLogs(message.results);
+        setLogs(message.results || []);
         setSending(false);
       }
     };
@@ -53,14 +73,14 @@ const LabelMessaging = () => {
     if (window.chrome?.runtime?.onMessage) {
       window.chrome.runtime.onMessage.addListener(messageListener);
       
-      // Cleanup listener on unmount
       return () => {
-        window.chrome.runtime.onMessage.removeListener(messageListener);
+        if (window.chrome?.runtime?.onMessage) {
+          window.chrome.runtime.onMessage.removeListener(messageListener);
+        }
       };
     }
   }, []);
 
-  // Fetch labels from WhatsApp Business
   const fetchLabels = () => {
     setLoading(true);
     
@@ -86,7 +106,6 @@ const LabelMessaging = () => {
         }
       );
     } else {
-      // For local development, mock labels
       setTimeout(() => {
         const mockLabels = [
           { 
@@ -118,17 +137,14 @@ const LabelMessaging = () => {
     }
   };
 
-  // Handle label selection
   const handleLabelChange = (value: string) => {
     setSelectedLabel(value);
   };
 
-  // Handle file selection
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files && files.length > 0) {
       const selectedFile = files[0];
-      // Check file type and size (10MB limit)
       const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
       const maxSize = 10 * 1024 * 1024; // 10MB
       
@@ -155,14 +171,12 @@ const LabelMessaging = () => {
     }
   };
 
-  // Handle attachment removal
   const removeAttachment = () => {
     setAttachment(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
     toast.info("Attachment removed");
   };
 
-  // Send messages to selected label's chats
   const handleSendLabelMessages = () => {
     if ((!message.trim() && !attachment) || !selectedLabel) {
       toast.error("Missing information", {
@@ -182,7 +196,6 @@ const LabelMessaging = () => {
     setSending(true);
     setLogs([]);
 
-    // Prepare file for sending if attached
     if (attachment) {
       const reader = new FileReader();
       reader.onloadend = () => {
@@ -193,7 +206,6 @@ const LabelMessaging = () => {
           data: reader.result
         };
 
-        // Send message to background script
         if (window.chrome?.runtime?.sendMessage) {
           window.chrome.runtime.sendMessage({
             action: "sendLabelMessages",
@@ -210,7 +222,6 @@ const LabelMessaging = () => {
           description: `Sending to ${label.chats.length} contacts with ${delay}s delay`
         });
 
-        // Mock for local development
         if (!window.chrome?.runtime?.sendMessage) {
           setTimeout(() => {
             const mockResults = label.chats.map(chat => ({
@@ -224,7 +235,6 @@ const LabelMessaging = () => {
       };
       reader.readAsDataURL(attachment);
     } else {
-      // No attachment, just send message
       if (window.chrome?.runtime?.sendMessage) {
         window.chrome.runtime.sendMessage({
           action: "sendLabelMessages",
@@ -241,7 +251,6 @@ const LabelMessaging = () => {
         description: `Sending to ${label.chats.length} contacts with ${delay}s delay`
       });
 
-      // Mock for local development
       if (!window.chrome?.runtime?.sendMessage) {
         setTimeout(() => {
           const mockResults = label.chats.map(chat => ({
@@ -255,7 +264,6 @@ const LabelMessaging = () => {
     }
   };
 
-  // Get selected label details
   const getSelectedLabelDetails = () => {
     if (!selectedLabel) return null;
     return labels.find(l => l.name === selectedLabel);
@@ -346,7 +354,6 @@ const LabelMessaging = () => {
                 />
               </div>
               
-              {/* File attachment section */}
               <div className="space-y-2">
                 <Label>Attachment (optional)</Label>
                 <div className="flex items-center space-x-2">
