@@ -1,29 +1,55 @@
 // Listen for messages from content scripts and popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  console.log("Background received message:", message);
+  
   if (message.action === "sendBulkMessages") {
-    sendBulkMessages(message.data.numbers, message.data.message, message.data.delay, message.data.attachment);
+    sendBulkMessages(message.data.numbers, message.data.message, message.data.delay, message.data.attachment)
+      .then(results => {
+        chrome.runtime.sendMessage({
+          action: "bulkMessageResults",
+          results: results
+        });
+      });
   } else if (message.action === "toggleAutoReply") {
     toggleAutoReply(message.data.enabled);
   } else if (message.action === "exportContacts") {
     exportContacts();
   } else if (message.action === "getGroups") {
-    getGroups().then(sendResponse);
+    getGroups().then(groups => {
+      sendResponse(groups);
+    });
     return true; // Keep message channel open for async response
   } else if (message.action === "sendGroupMessages") {
-    sendGroupMessages(message.data.groups, message.data.message, message.data.delay, message.data.attachment);
+    sendGroupMessages(message.data.groups, message.data.message, message.data.delay, message.data.attachment)
+      .then(results => {
+        chrome.runtime.sendMessage({
+          action: "groupMessageResults",
+          results: results
+        });
+      });
   } else if (message.action === "updateWelcomeMessage") {
     updateWelcomeMessage(message.data.welcomeMessage);
   } else if (message.action === "getBusinessLabels") {
-    getBusinessLabels().then(sendResponse);
+    getBusinessLabels().then(labels => {
+      sendResponse(labels);
+    });
     return true; // Keep message channel open for async response
   } else if (message.action === "sendLabelMessages") {
-    sendLabelMessages(message.data.label, message.data.message, message.data.delay, message.data.attachment);
+    sendLabelMessages(message.data.label, message.data.message, message.data.delay, message.data.attachment)
+      .then(results => {
+        chrome.runtime.sendMessage({
+          action: "labelMessageResults",
+          results: results
+        });
+      });
   }
-  return true; // Keep message channel open for async operations
+  
+  return true; // Always return true to indicate async response
 });
 
 // Function to send bulk messages
 async function sendBulkMessages(numbers, message, delay, attachment) {
+  console.log("Starting to send bulk messages to:", numbers);
   const results = [];
   
   for (let i = 0; i < numbers.length; i++) {
@@ -31,6 +57,8 @@ async function sendBulkMessages(numbers, message, delay, attachment) {
     if (!number) continue;
     
     try {
+      console.log(`Processing number ${i+1}/${numbers.length}: ${number}`);
+      
       // Open WhatsApp direct message link
       const tab = await chrome.tabs.create({
         url: `https://wa.me/${number}`,
@@ -40,25 +68,35 @@ async function sendBulkMessages(numbers, message, delay, attachment) {
       // Wait for page to load
       await new Promise(r => setTimeout(r, 3000));
       
-      // Check if number is valid (by checking for error screens)
-      const isValid = await chrome.tabs.executeScript(tab.id, {
-        code: `
-          // Check if there's an error message about invalid number
-          !document.body.textContent.includes('phone number shared via link is not on WhatsApp');
-        `
-      });
+      // Check if number is valid
+      let isValid = true;
+      try {
+        const [validCheck] = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: () => {
+            return !document.body.textContent.includes('phone number shared via link is not on WhatsApp');
+          }
+        });
+        isValid = validCheck.result;
+      } catch (e) {
+        console.error("Error checking if number is valid:", e);
+        isValid = false;
+      }
       
       // If number is invalid, log and skip
-      if (!isValid[0]) {
+      if (!isValid) {
+        console.log(`Number ${number} is invalid`);
         results.push({ number, status: 'invalid', error: 'Number not on WhatsApp' });
         await chrome.tabs.remove(tab.id);
         continue;
       }
       
       // Inject a script to send the message with attachment if provided
-      await chrome.tabs.executeScript(tab.id, {
-        code: `
-          (async () => {
+      let sendResult;
+      try {
+        const [result] = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: async (messageText, attachmentData) => {
             // Click on "Continue to chat" button if it exists
             const continueBtn = document.querySelector('a[title="Continue to Chat"]');
             if (continueBtn) {
@@ -75,12 +113,11 @@ async function sendBulkMessages(numbers, message, delay, attachment) {
             await new Promise(r => setTimeout(r, 1500));
             
             // Handle attachment if provided
-            const attachment = ${JSON.stringify(attachment)};
-            if (attachment) {
+            if (attachmentData) {
               try {
                 // First, we need to click the attachment button
                 const attachButton = document.querySelector('[data-testid="attach-menu-icon"]') || 
-                                     document.querySelector('[data-icon="attach-menu-plus"]');
+                                    document.querySelector('[data-icon="attach-menu-plus"]');
                 
                 if (!attachButton) {
                   return { success: false, error: 'Attachment button not found' };
@@ -90,15 +127,15 @@ async function sendBulkMessages(numbers, message, delay, attachment) {
                 await new Promise(r => setTimeout(r, 500));
                 
                 // Create a blob from the base64 data
-                const binaryString = atob(attachment.data.split(',')[1]);
+                const binaryString = atob(attachmentData.data.split(',')[1]);
                 const bytes = new Uint8Array(binaryString.length);
                 for (let i = 0; i < binaryString.length; i++) {
                   bytes[i] = binaryString.charCodeAt(i);
                 }
-                const blob = new Blob([bytes], { type: attachment.type });
+                const blob = new Blob([bytes], { type: attachmentData.type });
                 
                 // Create a File object from the Blob
-                const file = new File([blob], attachment.name, { type: attachment.type });
+                const file = new File([blob], attachmentData.name, { type: attachmentData.type });
                 
                 // Find the document/photo input
                 const fileInputSelector = 'input[type="file"]';
@@ -126,7 +163,6 @@ async function sendBulkMessages(numbers, message, delay, attachment) {
             }
             
             // Add text message if provided
-            const messageText = ${JSON.stringify(message)};
             if (messageText) {
               // Find the message input and add text
               const messageInput = document.querySelector('[data-testid="compose-box-input"]');
@@ -150,12 +186,24 @@ async function sendBulkMessages(numbers, message, delay, attachment) {
             }
             
             return { success: false, error: 'Send button not found' };
-          })();
-        `
-      });
+          },
+          args: [message, attachment]
+        });
+        
+        sendResult = result.result;
+      } catch (e) {
+        console.error("Error executing script:", e);
+        sendResult = { success: false, error: e.message };
+      }
       
-      // Log success
-      results.push({ number, status: 'success' });
+      // Log result
+      if (sendResult && sendResult.success) {
+        console.log(`Successfully sent message to ${number}`);
+        results.push({ number, status: 'success' });
+      } else {
+        console.log(`Failed to send message to ${number}:`, sendResult?.error || 'Unknown error');
+        results.push({ number, status: 'failed', error: sendResult?.error || 'Unknown error' });
+      }
       
       // Close the tab
       await chrome.tabs.remove(tab.id);
@@ -164,6 +212,7 @@ async function sendBulkMessages(numbers, message, delay, attachment) {
       await new Promise(r => setTimeout(r, delay * 1000));
       
     } catch (error) {
+      console.error(`Error processing ${number}:`, error);
       results.push({ number, status: 'failed', error: error.message });
       // Try to close tab if it was created but had errors
       try {
@@ -177,11 +226,8 @@ async function sendBulkMessages(numbers, message, delay, attachment) {
     }
   }
   
-  // Send results back to popup
-  chrome.runtime.sendMessage({
-    action: "bulkMessageResults",
-    results: results
-  });
+  console.log("Bulk message sending completed with results:", results);
+  return results;
 }
 
 // Function to toggle auto-reply

@@ -14,14 +14,12 @@ import WelcomeSettings from "@/components/WelcomeSettings";
 import LabelMessaging from "@/components/LabelMessaging";
 import { ChromeApi } from "@/lib/chrome.d";
 
-// Import type definition for Chrome API
 declare global {
   interface Window {
     chrome?: ChromeApi;
   }
 }
 
-// Phone number validation status
 type NumberStatus = 'valid' | 'invalid' | 'duplicate' | 'unchecked';
 
 interface PhoneNumber {
@@ -42,7 +40,6 @@ const Index = () => {
   const [summary, setSummary] = useState({ valid: 0, invalid: 0, duplicate: 0 });
   const [activeTab, setActiveTab] = useState("bulk-message");
 
-  // Handle file selection
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files && files.length > 0) {
@@ -73,21 +70,18 @@ const Index = () => {
     }
   };
 
-  // Format file size
   const formatFileSize = (bytes: number): string => {
     if (bytes < 1024) return bytes + ' bytes';
     else if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
     else return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   };
 
-  // Handle attachment removal
   const removeAttachment = () => {
     setAttachment(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
     toast.info("Attachment removed");
   };
 
-  // Validate phone numbers
   const validateNumbers = useCallback(() => {
     if (!numbers.trim()) return false;
 
@@ -139,8 +133,7 @@ const Index = () => {
 
     return validCount > 0;
   }, [numbers]);
-  
-  // Handle sending bulk messages
+
   const handleSendBulkMessages = () => {
     if (!message.trim() && !attachment) {
       toast.error("Please enter a message or attach a file", {
@@ -176,6 +169,7 @@ const Index = () => {
           .map(item => item.value);
 
         if (window.chrome?.runtime?.sendMessage) {
+          console.log("Sending bulk messages request to extension");
           window.chrome.runtime.sendMessage({
             action: "sendBulkMessages",
             data: {
@@ -185,6 +179,35 @@ const Index = () => {
               attachment: fileData
             }
           });
+          
+          const messageListener = (response: any) => {
+            if (response.action === "bulkMessageResults") {
+              console.log("Received bulk message results:", response.results);
+              setLogs(response.results);
+              setSending(false);
+              
+              const successCount = response.results.filter((r: any) => r.status === 'success').length;
+              const failCount = response.results.filter((r: any) => r.status !== 'success').length;
+              
+              if (successCount > 0) {
+                toast.success(`Sent ${successCount} messages successfully`, {
+                  description: failCount > 0 ? `${failCount} messages failed to send` : undefined
+                });
+              } else {
+                toast.error(`Failed to send any messages`, {
+                  description: "Please check the console for more details"
+                });
+              }
+              
+              if (window.chrome?.runtime?.onMessage?.removeListener) {
+                window.chrome.runtime.onMessage.removeListener(messageListener);
+              }
+            }
+          };
+          
+          if (window.chrome?.runtime?.onMessage?.addListener) {
+            window.chrome.runtime.onMessage.addListener(messageListener);
+          }
         }
 
         toast.success("Bulk messages sending initiated", {
@@ -209,6 +232,7 @@ const Index = () => {
         .map(item => item.value);
 
       if (window.chrome?.runtime?.sendMessage) {
+        console.log("Sending bulk messages request to extension (no attachment)");
         window.chrome.runtime.sendMessage({
           action: "sendBulkMessages",
           data: {
@@ -218,6 +242,35 @@ const Index = () => {
             attachment: null
           }
         });
+        
+        const messageListener = (response: any) => {
+          if (response.action === "bulkMessageResults") {
+            console.log("Received bulk message results:", response.results);
+            setLogs(response.results);
+            setSending(false);
+            
+            const successCount = response.results.filter((r: any) => r.status === 'success').length;
+            const failCount = response.results.filter((r: any) => r.status !== 'success').length;
+            
+            if (successCount > 0) {
+              toast.success(`Sent ${successCount} messages successfully`, {
+                description: failCount > 0 ? `${failCount} messages failed to send` : undefined
+              });
+            } else {
+              toast.error(`Failed to send any messages`, {
+                description: "Please check the console for more details"
+              });
+            }
+            
+            if (window.chrome?.runtime?.onMessage?.removeListener) {
+              window.chrome.runtime.onMessage.removeListener(messageListener);
+            }
+          }
+        };
+        
+        if (window.chrome?.runtime?.onMessage?.addListener) {
+          window.chrome.runtime.onMessage.addListener(messageListener);
+        }
       }
 
       toast.success("Bulk messages sending initiated", {
@@ -237,7 +290,6 @@ const Index = () => {
     }
   };
 
-  // Handle toggling auto-reply
   const handleToggleAutoReply = (enabled: boolean) => {
     setAutoReply(enabled);
     
@@ -261,7 +313,6 @@ const Index = () => {
     }
   };
 
-  // Handle exporting contacts
   const handleExportContacts = () => {
     if (window.chrome?.runtime?.sendMessage) {
       window.chrome.runtime.sendMessage({
@@ -274,14 +325,12 @@ const Index = () => {
     });
   };
 
-  // Handle number input change and validation
   const handleNumbersChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setNumbers(e.target.value);
     setValidatedNumbers([]);
     setSummary({ valid: 0, invalid: 0, duplicate: 0 });
   };
 
-  // Format phone number for display
   const getNumberStyle = (status: NumberStatus) => {
     switch(status) {
       case 'valid':
@@ -312,7 +361,6 @@ const Index = () => {
           <TabsTrigger value="export">Export</TabsTrigger>
         </TabsList>
         
-        {/* Bulk Message Tab */}
         <TabsContent value="bulk-message" className="space-y-4">
           <Card>
             <CardHeader>
@@ -472,17 +520,14 @@ const Index = () => {
           )}
         </TabsContent>
         
-        {/* Group Message Tab */}
         <TabsContent value="group-message">
           <GroupMessaging />
         </TabsContent>
         
-        {/* Label Message Tab */}
         <TabsContent value="label-message">
           <LabelMessaging />
         </TabsContent>
         
-        {/* Auto Reply Tab */}
         <TabsContent value="auto-reply">
           <Card>
             <CardHeader>
@@ -530,12 +575,10 @@ const Index = () => {
           </Card>
         </TabsContent>
         
-        {/* Welcome Message Tab */}
         <TabsContent value="welcome">
           <WelcomeSettings />
         </TabsContent>
         
-        {/* Export Tab */}
         <TabsContent value="export">
           <Card>
             <CardHeader>

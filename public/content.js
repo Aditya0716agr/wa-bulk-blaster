@@ -1,37 +1,60 @@
 // Initialize when DOM is fully loaded
 document.addEventListener('DOMContentLoaded', init);
+window.addEventListener('load', init); // Add an additional listener for window.load
 
 // Global variables
 let autoReplyEnabled = false;
 let floatingButton = null;
 let welcomeMessage = "Welcome to the group! We're glad to have you here.";
+let isInitialized = false;
 
 // Get stored settings from storage
 chrome.storage.local.get(['autoReplyEnabled', 'welcomeMessage'], (result) => {
+  console.log("Retrieved stored settings:", result);
   autoReplyEnabled = result.autoReplyEnabled || false;
   welcomeMessage = result.welcomeMessage || welcomeMessage;
 });
 
 // Initialize content script
 function init() {
+  // Prevent multiple initializations
+  if (isInitialized) return;
+  isInitialized = true;
+  
+  console.log("WhatsApp Bulk Blaster content script initializing...");
+  
   // Check if this is WhatsApp Web
-  if (!window.location.href.includes('web.whatsapp.com')) return;
+  if (!window.location.href.includes('web.whatsapp.com')) {
+    console.log("Not on WhatsApp Web, checking for wa.me links");
+    if (window.location.href.includes('wa.me')) {
+      setupInvalidNumberDetection();
+    }
+    return;
+  }
+  
+  console.log("On WhatsApp Web, setting up extension functionality");
   
   // Add a small delay to ensure WhatsApp Web DOM is loaded
   setTimeout(() => {
     createFloatingButton();
     setupMessageObserver();
     setupAutoReply();
-    setupInvalidNumberDetection();
     setupGroupObserver();
+    updateFloatingButton();
+    console.log("WhatsApp Bulk Blaster initialized successfully");
   }, 5000);
 }
 
 // Create floating button
 function createFloatingButton() {
+  // Remove any existing button first
+  if (floatingButton) {
+    floatingButton.remove();
+  }
+  
   // Create the button element
   floatingButton = document.createElement('div');
-  floatingButton.innerHTML = 'Hello from Extension';
+  floatingButton.innerHTML = 'WhatsApp Bulk Blaster';
   floatingButton.className = 'wa-bulk-blaster-floating-btn';
   
   // Add styles
@@ -63,8 +86,10 @@ function createFloatingButton() {
   
   // Add click listener
   floatingButton.addEventListener('click', () => {
-    alert('WA Bulk Blaster is active!');
+    alert('WA Bulk Blaster is active! Version 1.0.1');
   });
+  
+  console.log("Floating button created");
 }
 
 // Setup message observer to detect incoming messages
@@ -201,6 +226,8 @@ function checkForNewMessages() {
   const messageText = lastMessage.querySelector('.copyable-text')?.innerText;
   if (!messageText) return;
   
+  console.log("Received new message:", messageText);
+  
   // Send auto reply after a short delay
   setTimeout(() => {
     sendAutoReply(`Auto-reply: I received your message "${messageText}". I'll get back to you soon.`);
@@ -209,9 +236,14 @@ function checkForNewMessages() {
 
 // Send an auto-reply message
 function sendAutoReply(replyText) {
+  console.log("Sending auto-reply:", replyText);
+  
   // Find the message input field
   const inputField = document.querySelector('[data-testid="compose-box-input"]');
-  if (!inputField) return;
+  if (!inputField) {
+    console.error("Could not find message input field");
+    return;
+  }
   
   // Focus and fill input
   inputField.focus();
@@ -220,15 +252,25 @@ function sendAutoReply(replyText) {
   // Find and click send button
   setTimeout(() => {
     const sendButton = document.querySelector('[data-testid="send"]');
-    if (sendButton) sendButton.click();
+    if (sendButton) {
+      console.log("Clicking send button");
+      sendButton.click();
+    } else {
+      console.error("Could not find send button");
+    }
   }, 500);
 }
 
 // Generic function to send a message
 function sendMessage(messageText) {
+  console.log("Sending message:", messageText);
+  
   // Find the message input field
   const inputField = document.querySelector('[data-testid="compose-box-input"]');
-  if (!inputField) return;
+  if (!inputField) {
+    console.error("Could not find message input field");
+    return;
+  }
   
   // Focus and fill input
   inputField.focus();
@@ -237,29 +279,43 @@ function sendMessage(messageText) {
   // Find and click send button
   setTimeout(() => {
     const sendButton = document.querySelector('[data-testid="send"]');
-    if (sendButton) sendButton.click();
+    if (sendButton) {
+      console.log("Clicking send button");
+      sendButton.click();
+    } else {
+      console.error("Could not find send button");
+    }
   }, 500);
 }
 
 // Setup auto-reply functionality
 function setupAutoReply() {
+  console.log("Setting up auto-reply functionality");
+  
   // Listen for auto-reply toggle messages from background script
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    console.log("Content script received message:", message);
+    
     if (message.action === "autoReplyStatusChanged") {
+      console.log("Auto-reply status changed to:", message.enabled);
       autoReplyEnabled = message.enabled;
       updateFloatingButton();
     } else if (message.action === "exportContacts") {
+      console.log("Exporting contacts");
       exportContacts();
     } else if (message.action === "getGroups") {
+      console.log("Getting groups");
       getGroups().then(sendResponse);
       return true; // Keep message channel open for async response
     } else if (message.action === "getBusinessLabels") {
+      console.log("Getting business labels");
       getBusinessLabels().then(sendResponse);
       return true; // Keep message channel open for async response
     } else if (message.action === "welcomeMessageUpdated") {
+      console.log("Welcome message updated to:", message.welcomeMessage);
       welcomeMessage = message.welcomeMessage;
     }
-    return true;
+    return true; // Keep the message channel open
   });
 }
 
@@ -269,11 +325,13 @@ function updateFloatingButton() {
   
   floatingButton.innerHTML = autoReplyEnabled ? 
     'Auto-Reply: ON' : 
-    'Hello from Extension';
+    'WhatsApp Bulk Blaster';
     
   floatingButton.style.backgroundColor = autoReplyEnabled ? 
     '#4CAF50' : 
     '#9b87f5';
+    
+  console.log("Floating button updated, auto-reply:", autoReplyEnabled);
 }
 
 // Export contacts
@@ -378,3 +436,24 @@ async function getBusinessLabels() {
     labels: labels 
   };
 }
+
+// Ensure WhatsApp Web is loaded before initializing
+if (document.readyState === "complete") {
+  init();
+} else {
+  // Sometimes DOMContentLoaded might not be enough, so we also listen for load
+  window.addEventListener("load", () => {
+    setTimeout(init, 1000);
+  });
+}
+
+// Re-initialize on URL changes (for SPA)
+let lastUrl = location.href;
+new MutationObserver(() => {
+  if (location.href !== lastUrl) {
+    lastUrl = location.href;
+    setTimeout(init, 1000);
+  }
+}).observe(document, {subtree: true, childList: true});
+
+console.log("WhatsApp Bulk Blaster content script loaded");
