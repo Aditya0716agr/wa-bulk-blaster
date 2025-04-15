@@ -47,6 +47,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true; // Always return true to indicate async response
 });
 
+// Log that the background script has loaded
+console.log("WhatsApp Bulk Blaster background script loaded");
+
 // Function to send bulk messages
 async function sendBulkMessages(numbers, message, delay, attachment) {
   console.log("Starting to send bulk messages to:", numbers);
@@ -65,8 +68,8 @@ async function sendBulkMessages(numbers, message, delay, attachment) {
         active: false
       });
       
-      // Wait for page to load
-      await new Promise(r => setTimeout(r, 3000));
+      // Wait for page to load - increased wait time
+      await new Promise(r => setTimeout(r, 5000));
       
       // Check if number is valid
       let isValid = true;
@@ -97,11 +100,14 @@ async function sendBulkMessages(numbers, message, delay, attachment) {
         const [result] = await chrome.scripting.executeScript({
           target: { tabId: tab.id },
           func: async (messageText, attachmentData) => {
+            console.log("Executing script to send message:", messageText);
+            
             // Click on "Continue to chat" button if it exists
             const continueBtn = document.querySelector('a[title="Continue to Chat"]');
             if (continueBtn) {
+              console.log("Clicking continue to chat button");
               continueBtn.click();
-              await new Promise(r => setTimeout(r, 3000));
+              await new Promise(r => setTimeout(r, 5000));
             }
             
             // Now we should be in chat window, check if we're properly in WhatsApp Web
@@ -109,8 +115,16 @@ async function sendBulkMessages(numbers, message, delay, attachment) {
               return { success: false, error: 'Failed to open WhatsApp Web' };
             }
             
-            // Add a small delay to ensure elements are loaded
-            await new Promise(r => setTimeout(r, 1500));
+            // Added longer delay to ensure WhatsApp Web is fully loaded
+            await new Promise(r => setTimeout(r, 5000));
+            
+            // Check if the user is logged in to WhatsApp Web
+            const loginCheck = document.querySelector('[data-testid="intro-text"]') || 
+                              document.querySelector('[data-testid="qrcode"]');
+            
+            if (loginCheck) {
+              return { success: false, error: 'Not logged in to WhatsApp Web' };
+            }
             
             // Handle attachment if provided
             if (attachmentData) {
@@ -124,7 +138,7 @@ async function sendBulkMessages(numbers, message, delay, attachment) {
                 }
                 
                 attachButton.click();
-                await new Promise(r => setTimeout(r, 500));
+                await new Promise(r => setTimeout(r, 1000));
                 
                 // Create a blob from the base64 data
                 const binaryString = atob(attachmentData.data.split(',')[1]);
@@ -155,7 +169,7 @@ async function sendBulkMessages(numbers, message, delay, attachment) {
                 fileInput.dispatchEvent(event);
                 
                 // Wait for attachment to upload
-                await new Promise(r => setTimeout(r, 2000));
+                await new Promise(r => setTimeout(r, 3000));
               } catch (error) {
                 console.error('Attachment error:', error);
                 return { success: false, error: 'Failed to attach file: ' + error.message };
@@ -167,6 +181,7 @@ async function sendBulkMessages(numbers, message, delay, attachment) {
               // Find the message input and add text
               const messageInput = document.querySelector('[data-testid="compose-box-input"]');
               if (messageInput) {
+                console.log("Found message input, adding text");
                 messageInput.focus();
                 // Use document.execCommand for compatibility
                 document.execCommand('insertText', false, messageText);
@@ -174,23 +189,37 @@ async function sendBulkMessages(numbers, message, delay, attachment) {
                 // Trigger input event
                 const event = new Event('input', { bubbles: true });
                 messageInput.dispatchEvent(event);
+                
+                // Additional verification that text was entered
+                if (!messageInput.textContent && !messageInput.innerHTML) {
+                  console.error("Failed to insert text into input");
+                  
+                  // Alternative method to set text
+                  messageInput.textContent = messageText;
+                }
+              } else {
+                console.error("Message input not found");
+                return { success: false, error: 'Message input not found' };
               }
             }
             
             // Finally click the send button
-            await new Promise(r => setTimeout(r, 500));
+            await new Promise(r => setTimeout(r, 1000));
             const sendButton = document.querySelector('[data-testid="send"]');
             if (sendButton) {
+              console.log("Found send button, clicking it");
               sendButton.click();
               return { success: true };
+            } else {
+              console.error("Send button not found");
+              return { success: false, error: 'Send button not found' };
             }
-            
-            return { success: false, error: 'Send button not found' };
           },
           args: [message, attachment]
         });
         
         sendResult = result.result;
+        console.log("Send result:", sendResult);
       } catch (e) {
         console.error("Error executing script:", e);
         sendResult = { success: false, error: e.message };
@@ -296,6 +325,7 @@ async function sendGroupMessages(groups, message, delay, attachment) {
   // Get the WhatsApp Web tab
   const tabs = await chrome.tabs.query({ url: "https://web.whatsapp.com/*" });
   if (tabs.length === 0) {
+    console.error("WhatsApp Web is not open");
     chrome.runtime.sendMessage({
       action: "groupMessageResults",
       results: [{ name: "Error", status: "failed", error: "WhatsApp Web is not open" }]
@@ -310,56 +340,79 @@ async function sendGroupMessages(groups, message, delay, attachment) {
     const group = groups[i];
     
     try {
-      // Click on the group to open the chat
-      await chrome.tabs.executeScript(tab.id, {
-        code: `
-          (async () => {
-            // Try to find and click the group in the sidebar
-            const groups = await ${getGroups.toString()}();
-            const group = groups.find(g => g.id === "${group.id}");
+      console.log(`Sending message to group: ${group.name}`);
+      
+      // Click on the group to open the chat - use executeScript for better error handling
+      let openChatResult;
+      try {
+        [openChatResult] = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: (groupId, groupName) => {
+            console.log(`Looking for group: ${groupName} with ID: ${groupId}`);
             
-            if (group && group.element) {
-              group.element.click();
-              return { success: true };
+            // Try to find the group in the sidebar by name if ID doesn't work
+            const groups = document.querySelectorAll('[data-testid="cell-frame-container"]');
+            for (const item of groups) {
+              const nameEl = item.querySelector('[data-testid="cell-frame-title"]');
+              if (nameEl && (item.getAttribute('data-id') === groupId || 
+                  nameEl.textContent.trim() === groupName)) {
+                console.log("Found group, clicking it");
+                item.click();
+                return { success: true };
+              }
             }
             
-            return { success: false, error: "Group not found" };
-          })();
-        `
-      });
+            return { success: false, error: "Group not found in sidebar" };
+          },
+          args: [group.id, group.name]
+        });
+      } catch (e) {
+        console.error("Error opening group chat:", e);
+        results.push({ name: group.name, status: 'failed', error: `Error opening chat: ${e.message}` });
+        continue;
+      }
+      
+      if (!openChatResult.result.success) {
+        console.error("Failed to open group chat:", openChatResult.result.error);
+        results.push({ name: group.name, status: 'failed', error: openChatResult.result.error });
+        continue;
+      }
       
       // Wait for chat to load
-      await new Promise(r => setTimeout(r, 1000));
+      await new Promise(r => setTimeout(r, 3000));
       
       // Send the message with attachment if provided
-      await chrome.tabs.executeScript(tab.id, {
-        code: `
-          (async () => {
+      let sendResult;
+      try {
+        [sendResult] = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: async (messageText, attachmentData) => {
+            console.log("Trying to send message to group");
+            
             // Handle attachment if provided
-            const attachment = ${JSON.stringify(attachment)};
-            if (attachment) {
+            if (attachmentData) {
               try {
                 // First, we need to click the attachment button
                 const attachButton = document.querySelector('[data-testid="attach-menu-icon"]') || 
-                                     document.querySelector('[data-icon="attach-menu-plus"]');
+                                    document.querySelector('[data-icon="attach-menu-plus"]');
                 
                 if (!attachButton) {
                   return { success: false, error: 'Attachment button not found' };
                 }
                 
                 attachButton.click();
-                await new Promise(r => setTimeout(r, 500));
+                await new Promise(r => setTimeout(r, 1000));
                 
                 // Create a blob from the base64 data
-                const binaryString = atob(attachment.data.split(',')[1]);
+                const binaryString = atob(attachmentData.data.split(',')[1]);
                 const bytes = new Uint8Array(binaryString.length);
                 for (let i = 0; i < binaryString.length; i++) {
                   bytes[i] = binaryString.charCodeAt(i);
                 }
-                const blob = new Blob([bytes], { type: attachment.type });
+                const blob = new Blob([bytes], { type: attachmentData.type });
                 
                 // Create a File object from the Blob
-                const file = new File([blob], attachment.name, { type: attachment.type });
+                const file = new File([blob], attachmentData.name, { type: attachmentData.type });
                 
                 // Find the document/photo input
                 const fileInputSelector = 'input[type="file"]';
@@ -379,7 +432,7 @@ async function sendGroupMessages(groups, message, delay, attachment) {
                 fileInput.dispatchEvent(event);
                 
                 // Wait for attachment to upload
-                await new Promise(r => setTimeout(r, 2000));
+                await new Promise(r => setTimeout(r, 3000));
               } catch (error) {
                 console.error('Attachment error:', error);
                 return { success: false, error: 'Failed to attach file: ' + error.message };
@@ -387,11 +440,11 @@ async function sendGroupMessages(groups, message, delay, attachment) {
             }
             
             // Add text message if provided
-            const messageText = ${JSON.stringify(message)};
             if (messageText) {
               // Find the message input and add text
               const messageInput = document.querySelector('[data-testid="compose-box-input"]');
               if (messageInput) {
+                console.log("Found message input, adding text");
                 messageInput.focus();
                 // Use document.execCommand for compatibility
                 document.execCommand('insertText', false, messageText);
@@ -399,29 +452,52 @@ async function sendGroupMessages(groups, message, delay, attachment) {
                 // Trigger input event
                 const event = new Event('input', { bubbles: true });
                 messageInput.dispatchEvent(event);
+                
+                // Verify text was entered
+                if (!messageInput.textContent && !messageInput.innerHTML) {
+                  console.error("Failed to insert text into input");
+                  
+                  // Alternative method to set text
+                  messageInput.textContent = messageText;
+                }
+              } else {
+                console.error("Message input not found");
+                return { success: false, error: 'Message input not found' };
               }
             }
             
             // Finally click the send button
-            await new Promise(r => setTimeout(r, 500));
+            await new Promise(r => setTimeout(r, 1000));
             const sendButton = document.querySelector('[data-testid="send"]');
             if (sendButton) {
+              console.log("Found send button, clicking it");
               sendButton.click();
               return { success: true };
+            } else {
+              console.error("Send button not found");
+              return { success: false, error: 'Send button not found' };
             }
-            
-            return { success: false, error: 'Send button not found' };
-          })();
-        `
-      });
+          },
+          args: [message, attachment]
+        });
+      } catch (e) {
+        console.error("Error sending message:", e);
+        results.push({ name: group.name, status: 'failed', error: `Error sending message: ${e.message}` });
+        continue;
+      }
       
-      // Log success
-      results.push({ name: group.name, status: 'success' });
+      if (sendResult.result.success) {
+        console.log(`Successfully sent message to group: ${group.name}`);
+        results.push({ name: group.name, status: 'success' });
+      } else {
+        console.error(`Failed to send message to group ${group.name}:`, sendResult.result.error);
+        results.push({ name: group.name, status: 'failed', error: sendResult.result.error });
+      }
       
       // Wait for the delay specified by user
       await new Promise(r => setTimeout(r, delay * 1000));
-      
     } catch (error) {
+      console.error(`Error processing group ${group.name}:`, error);
       results.push({ name: group.name, status: 'failed', error: error.message });
     }
   }

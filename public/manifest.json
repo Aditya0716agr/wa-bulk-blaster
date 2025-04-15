@@ -2,7 +2,7 @@
 {
   "manifest_version": 3,
   "name": "WhatsApp Bulk Blaster",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Send bulk messages and automate replies on WhatsApp Web",
   "action": {
     "default_popup": "index.html",
@@ -24,7 +24,8 @@
   "content_scripts": [
     {
       "matches": ["https://web.whatsapp.com/*", "https://wa.me/*"],
-      "js": ["content.js"]
+      "js": ["content.js"],
+      "run_at": "document_end"
     }
   ],
   "host_permissions": [

@@ -41,8 +41,8 @@ export interface ChromeTabs {
 export interface ChromeApi {
   storage: ChromeStorage;
   runtime: ChromeRuntime;
-  tabs?: ChromeTabs;
-  scripting?: ChromeScripting;
+  tabs: ChromeTabs;
+  scripting: ChromeScripting;
 }
 
 declare global {
