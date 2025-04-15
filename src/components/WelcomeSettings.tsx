@@ -17,11 +17,13 @@ interface ChromeRuntime {
   sendMessage: (message: any) => void;
 }
 
+// Define the Chrome API structure
 interface ChromeApi {
   storage?: ChromeStorage;
   runtime?: ChromeRuntime;
 }
 
+// Add Chrome API to the Window interface
 declare global {
   interface Window {
     chrome?: ChromeApi;

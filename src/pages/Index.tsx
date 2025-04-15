@@ -12,15 +12,12 @@ import { Badge } from "@/components/ui/badge";
 import GroupMessaging from "@/components/GroupMessaging";
 import WelcomeSettings from "@/components/WelcomeSettings";
 import LabelMessaging from "@/components/LabelMessaging";
+import { ChromeApi } from "@/lib/chrome.d";
 
-// Type definitions for Chrome extension API
+// Import type definition for Chrome API
 declare global {
   interface Window {
-    chrome?: {
-      runtime: {
-        sendMessage: (message: any, callback?: (response: any) => void) => void;
-      };
-    };
+    chrome?: ChromeApi;
   }
 }
 
@@ -50,7 +47,6 @@ const Index = () => {
     const files = e.target.files;
     if (files && files.length > 0) {
       const selectedFile = files[0];
-      // Check file type and size (10MB limit)
       const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
       const maxSize = 10 * 1024 * 1024; // 10MB
       
@@ -95,12 +91,10 @@ const Index = () => {
   const validateNumbers = useCallback(() => {
     if (!numbers.trim()) return false;
 
-    // Parse and clean numbers
     const numberList = numbers.split("\n")
       .map(n => n.trim())
       .filter(n => n);
     
-    // Check for duplicates and format
     const uniqueNumbers = new Set<string>();
     const phoneNumberRegex = /^\d{10,15}$/;
     const validated: PhoneNumber[] = [];
@@ -109,10 +103,8 @@ const Index = () => {
     let duplicateCount = 0;
 
     numberList.forEach(number => {
-      // Remove spaces, dashes, parentheses
       const cleanNumber = number.replace(/[\s\-\(\)]+/g, '');
       
-      // Check if it's a duplicate
       if (uniqueNumbers.has(cleanNumber)) {
         validated.push({
           value: number,
@@ -122,11 +114,10 @@ const Index = () => {
         return;
       }
       
-      // Check if it's valid format
       if (phoneNumberRegex.test(cleanNumber)) {
         uniqueNumbers.add(cleanNumber);
         validated.push({
-          value: cleanNumber, // Store clean number for sending
+          value: cleanNumber,
           status: 'valid'
         });
         validCount++;
@@ -158,7 +149,6 @@ const Index = () => {
       return;
     }
 
-    // Validate numbers
     const isValid = validateNumbers();
     if (!isValid) {
       toast.error("No valid phone numbers found", {
@@ -170,7 +160,6 @@ const Index = () => {
     setSending(true);
     setLogs([]);
 
-    // Prepare file for sending if attached
     let fileData = null;
     if (attachment) {
       const reader = new FileReader();
@@ -182,12 +171,10 @@ const Index = () => {
           data: reader.result
         };
 
-        // Only send valid numbers (filtered duplicates and invalid)
         const validNumbersToSend = validatedNumbers
           .filter(item => item.status === 'valid')
           .map(item => item.value);
 
-        // Send message to background script
         if (window.chrome?.runtime?.sendMessage) {
           window.chrome.runtime.sendMessage({
             action: "sendBulkMessages",
@@ -204,7 +191,6 @@ const Index = () => {
           description: `Sending to ${validNumbersToSend.length} recipients with ${delay}s delay`
         });
 
-        // Mock for local development
         if (!window.chrome?.runtime?.sendMessage) {
           setTimeout(() => {
             const mockResults = validNumbersToSend.map(number => ({
@@ -218,12 +204,10 @@ const Index = () => {
       };
       reader.readAsDataURL(attachment);
     } else {
-      // No attachment, just send message with valid numbers
       const validNumbersToSend = validatedNumbers
         .filter(item => item.status === 'valid')
         .map(item => item.value);
 
-      // Send message to background script
       if (window.chrome?.runtime?.sendMessage) {
         window.chrome.runtime.sendMessage({
           action: "sendBulkMessages",
@@ -240,7 +224,6 @@ const Index = () => {
         description: `Sending to ${validNumbersToSend.length} recipients with ${delay}s delay`
       });
 
-      // Mock for local development
       if (!window.chrome?.runtime?.sendMessage) {
         setTimeout(() => {
           const mockResults = validNumbersToSend.map(number => ({
@@ -258,7 +241,6 @@ const Index = () => {
   const handleToggleAutoReply = (enabled: boolean) => {
     setAutoReply(enabled);
     
-    // Send message to background script
     if (window.chrome?.runtime?.sendMessage) {
       window.chrome.runtime.sendMessage({
         action: "toggleAutoReply",
@@ -281,7 +263,6 @@ const Index = () => {
 
   // Handle exporting contacts
   const handleExportContacts = () => {
-    // Send message to background script
     if (window.chrome?.runtime?.sendMessage) {
       window.chrome.runtime.sendMessage({
         action: "exportContacts"
@@ -296,7 +277,6 @@ const Index = () => {
   // Handle number input change and validation
   const handleNumbersChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setNumbers(e.target.value);
-    // Clear validation when input changes
     setValidatedNumbers([]);
     setSummary({ valid: 0, invalid: 0, duplicate: 0 });
   };
@@ -353,7 +333,6 @@ const Index = () => {
                 />
               </div>
               
-              {/* File attachment section */}
               <div className="space-y-2">
                 <Label>Attachment (optional)</Label>
                 <div className="flex items-center space-x-2">
@@ -416,7 +395,6 @@ const Index = () => {
                   Example: 14155552671
                 </p>
                 
-                {/* Number validation status and summary */}
                 {validatedNumbers.length > 0 && (
                   <div className="mt-2 space-y-2">
                     <div className="flex flex-wrap gap-2">
