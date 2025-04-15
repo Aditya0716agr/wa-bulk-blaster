@@ -1,3 +1,4 @@
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -97,5 +98,53 @@
 
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+@layer components {
+  .animated-bg {
+    @apply bg-gradient-to-br from-purple-50 to-white bg-[length:200%_200%] animate-gradient;
+  }
+  
+  .hover-scale {
+    @apply transition-transform duration-200 hover:scale-105;
+  }
+  
+  .card-hover {
+    @apply transition-all duration-300 hover:shadow-md hover:border-purple-200;
+  }
+  
+  .btn-pulse {
+    @apply relative overflow-hidden;
+  }
+  
+  .btn-pulse::after {
+    @apply content-[''] absolute top-0 left-0 right-0 bottom-0 bg-white/30 transform scale-x-0 origin-left transition-transform duration-500;
+  }
+  
+  .btn-pulse:hover::after {
+    @apply scale-x-100;
+  }
+}
+
+@keyframes gradient {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@layer utilities {
+  .animate-gradient {
+    animation: gradient 15s ease infinite;
+  }
+  
+  .transition-all-ease {
+    @apply transition-all duration-300 ease-in-out;
   }
 }
