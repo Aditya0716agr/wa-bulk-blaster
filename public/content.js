@@ -7,6 +7,7 @@ let autoReplyEnabled = false;
 let floatingButton = null;
 let welcomeMessage = "Welcome to the group! We're glad to have you here.";
 let isInitialized = false;
+let lastMessageSent = null;
 
 // Get stored settings from storage
 chrome.storage.local.get(['autoReplyEnabled', 'welcomeMessage'], (result) => {
@@ -21,7 +22,7 @@ function init() {
   if (isInitialized) return;
   isInitialized = true;
   
-  console.log("WhatsApp Bulk Blaster content script initializing...");
+  console.log("🚀 WhatsApp Bulk Blaster content script initializing... v1.0.3");
   
   // Check if this is WhatsApp Web
   if (!window.location.href.includes('web.whatsapp.com')) {
@@ -40,8 +41,15 @@ function init() {
     setupMessageObserver();
     setupAutoReply();
     setupGroupObserver();
+    setupDirectMessageListeners();
     updateFloatingButton();
     console.log("WhatsApp Bulk Blaster initialized successfully");
+    
+    // Notify background script that we're ready
+    chrome.runtime.sendMessage({ 
+      action: "contentScriptReady",
+      data: { url: window.location.href }
+    });
   }, 5000);
 }
 
@@ -169,7 +177,7 @@ function checkForNewParticipants() {
           
           // Personalize welcome message if we have a name
           const personalizedMessage = participantName ? 
-            welcomeMsg.replace('{name}', participantName) : welcomeMsg;
+            welcomeMsg.replace('{name}', participantName) : welcomeMessage;
           
           // Delay sending the welcome message to make it seem natural
           setTimeout(() => {
@@ -179,6 +187,271 @@ function checkForNewParticipants() {
       }
     }
   });
+}
+
+// Setup listeners for direct message handling
+function setupDirectMessageListeners() {
+  console.log("Setting up direct message listeners");
+  
+  // Listen for messages from background script
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    console.log("Content script received message:", message);
+    
+    if (message.action === "sendDirectMessage") {
+      console.log("Received direct message request", message.data);
+      sendDirectMessage(message.data.message, message.data.attachment)
+        .then(result => {
+          console.log("Message sending result:", result);
+          sendResponse(result);
+        })
+        .catch(error => {
+          console.error("Error sending message:", error);
+          sendResponse({ success: false, error: error.message });
+        });
+      return true; // Keep the message channel open for async response
+    }
+  });
+}
+
+// Function to send a direct message in the current chat
+async function sendDirectMessage(messageText, attachment) {
+  console.log("🔵 Attempting to send direct message", { messageText, hasAttachment: !!attachment });
+  
+  try {
+    // Ensure we are in WhatsApp Web and in a chat
+    if (!window.location.href.includes('web.whatsapp.com')) {
+      throw new Error('Not in WhatsApp Web');
+    }
+    
+    // Check if we're in a chat (look for chat input)
+    const inputField = await waitForElement('[data-testid="compose-box-input"]', 10000);
+    if (!inputField) {
+      throw new Error('Message input not found - not in a chat');
+    }
+    
+    // Verify chat is loaded and ready for messages
+    const chatHeader = document.querySelector('[data-testid="conversation-header"]');
+    if (!chatHeader) {
+      throw new Error('Chat not fully loaded');
+    }
+    
+    // Handle attachment if provided
+    if (attachment) {
+      console.log("Processing attachment", attachment.name);
+      try {
+        // Click the attachment button
+        const attachButton = await waitForElement('[data-testid="attach-menu-icon"]', 5000) || 
+                              await waitForElement('[data-icon="attach-menu-plus"]', 5000);
+        
+        if (!attachButton) {
+          throw new Error('Attachment button not found');
+        }
+        
+        attachButton.click();
+        await sleep(1000);
+        
+        // Create a blob from the base64 data
+        const binaryString = atob(attachment.data.split(',')[1]);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        const blob = new Blob([bytes], { type: attachment.type });
+        
+        // Create a File object from the Blob
+        const file = new File([blob], attachment.name, { type: attachment.type });
+        
+        // Find the document/photo input
+        const fileInputSelector = 'input[type="file"]';
+        const fileInput = document.querySelector(fileInputSelector);
+        
+        if (!fileInput) {
+          throw new Error('File input not found');
+        }
+        
+        // Create a DataTransfer object and set the file
+        const dataTransfer = new DataTransfer();
+        dataTransfer.items.add(file);
+        fileInput.files = dataTransfer.files;
+        
+        // Trigger a change event
+        const event = new Event('change', { bubbles: true });
+        fileInput.dispatchEvent(event);
+        
+        // Wait for attachment to upload
+        console.log("Waiting for attachment to upload...");
+        await sleep(3000);
+        
+        console.log("Attachment processed successfully");
+      } catch (error) {
+        console.error('Attachment error:', error);
+        throw new Error('Failed to attach file: ' + error.message);
+      }
+    }
+    
+    // Add text message if provided
+    if (messageText) {
+      try {
+        // Find the message input and add text
+        console.log("Setting message text...");
+        
+        // Ensure the input is focused
+        inputField.focus();
+        
+        // Try different methods to insert text
+        let textInserted = false;
+        
+        // Method 1: use document.execCommand
+        try {
+          document.execCommand('insertText', false, messageText);
+          
+          // Verify text was inserted
+          if (inputField.innerText || inputField.textContent) {
+            textInserted = true;
+            console.log("Text inserted using execCommand");
+          }
+        } catch (e) {
+          console.warn("execCommand failed:", e);
+        }
+        
+        // Method 2: set innerText/textContent
+        if (!textInserted) {
+          try {
+            // Set text content
+            if ('innerText' in inputField) {
+              inputField.innerText = messageText;
+            } else {
+              inputField.textContent = messageText;
+            }
+            
+            // Trigger input event
+            const inputEvent = new Event('input', { bubbles: true });
+            inputField.dispatchEvent(inputEvent);
+            
+            console.log("Text inserted using textContent/innerText");
+            textInserted = true;
+          } catch (e) {
+            console.warn("textContent/innerText method failed:", e);
+          }
+        }
+        
+        // Method 3: clipboard paste method
+        if (!textInserted) {
+          try {
+            // Copy to clipboard
+            await navigator.clipboard.writeText(messageText);
+            
+            // Send paste event
+            const pasteEvent = new ClipboardEvent('paste', {
+              bubbles: true,
+              clipboardData: new DataTransfer()
+            });
+            inputField.dispatchEvent(pasteEvent);
+            
+            console.log("Text inserted using clipboard paste method");
+            textInserted = true;
+          } catch (e) {
+            console.warn("Clipboard paste method failed:", e);
+          }
+        }
+        
+        // Final verification
+        if (!textInserted) {
+          throw new Error("Failed to insert message text using all methods");
+        }
+        
+        // Wait a moment to ensure text is processed
+        await sleep(500);
+      } catch (error) {
+        console.error("Message input error:", error);
+        throw new Error('Failed to insert message: ' + error.message);
+      }
+    }
+    
+    // Click the send button
+    console.log("Clicking send button...");
+    const sendButton = await waitForElement('[data-testid="send"]', 5000);
+    if (!sendButton) {
+      throw new Error('Send button not found');
+    }
+    
+    // Store the message text for verification
+    lastMessageSent = messageText;
+    
+    // Click send button
+    sendButton.click();
+    
+    // Wait to see if message appears in chat
+    await sleep(2000);
+    
+    // Check if message was sent (look for our message text in the latest messages)
+    const sentSuccessfully = verifyMessageSent(messageText);
+    
+    if (sentSuccessfully) {
+      console.log("✅ Message sent successfully!");
+      return { success: true };
+    } else {
+      console.warn("⚠️ Could not verify message was sent");
+      return { success: true, warning: "Could not verify message was sent" };
+    }
+  } catch (error) {
+    console.error("❌ Failed to send message:", error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Helper function to verify if a message was sent
+function verifyMessageSent(messageText) {
+  try {
+    // Look for sent messages in the chat
+    const sentMessages = document.querySelectorAll('[data-testid="msg-text"]');
+    if (!sentMessages || sentMessages.length === 0) return false;
+    
+    // Check the most recent messages (last 3)
+    const messageCount = sentMessages.length;
+    for (let i = Math.max(0, messageCount - 3); i < messageCount; i++) {
+      const msgText = sentMessages[i].textContent;
+      if (msgText && msgText.includes(messageText)) {
+        return true;
+      }
+    }
+    
+    return false;
+  } catch (e) {
+    console.error("Error verifying message:", e);
+    return false;
+  }
+}
+
+// Helper function to wait for an element to appear in the DOM
+function waitForElement(selector, timeout = 5000) {
+  return new Promise((resolve) => {
+    if (document.querySelector(selector)) {
+      return resolve(document.querySelector(selector));
+    }
+    
+    const observer = new MutationObserver(() => {
+      if (document.querySelector(selector)) {
+        observer.disconnect();
+        resolve(document.querySelector(selector));
+      }
+    });
+    
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true
+    });
+    
+    setTimeout(() => {
+      observer.disconnect();
+      resolve(null);
+    }, timeout);
+  });
+}
+
+// Helper function for waiting
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 // Detect invalid number pages
@@ -456,4 +729,4 @@ new MutationObserver(() => {
   }
 }).observe(document, {subtree: true, childList: true});
 
-console.log("WhatsApp Bulk Blaster content script loaded");
+console.log("WhatsApp Bulk Blaster content script loaded v1.0.3");

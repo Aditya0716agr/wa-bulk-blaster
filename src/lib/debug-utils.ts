@@ -1,96 +1,93 @@
 
 import { showToast } from "./toast-utils";
 
-// Debug levels
-export type DebugLevel = 'info' | 'warn' | 'error' | 'debug';
-
-// Enable debug mode - change to true when troubleshooting
+// Debug mode flag - set to true to enable debug mode
 const DEBUG_MODE = true;
 
-// Log with timestamp and level
-export function debugLog(level: DebugLevel, message: string, data?: any): void {
+// Log levels
+export type LogLevel = 'info' | 'warn' | 'error' | 'debug';
+
+// Debug log function
+export function debugLog(level: LogLevel, message: string, data?: any) {
   if (!DEBUG_MODE) return;
   
-  const timestamp = new Date().toISOString();
-  const prefix = `[WA-Blaster ${timestamp}] ${level.toUpperCase()}:`;
+  const prefix = '🔍 [WA Blaster]';
   
   switch (level) {
-    case 'error':
-      console.error(prefix, message, data || '');
+    case 'info':
+      console.info(`${prefix} ℹ️ ${message}`, data || '');
       break;
     case 'warn':
-      console.warn(prefix, message, data || '');
+      console.warn(`${prefix} ⚠️ ${message}`, data || '');
       break;
-    case 'info':
-      console.info(prefix, message, data || '');
+    case 'error':
+      console.error(`${prefix} 🔴 ${message}`, data || '');
       break;
     case 'debug':
-    default:
-      console.log(prefix, message, data || '');
+      console.debug(`${prefix} 🐞 ${message}`, data || '');
+      break;
   }
 }
 
-// Show debug toast when in debug mode
-export function debugToast(message: string, data?: any): void {
+// Debug toast - shows a toast with debug information
+export function debugToast(message: string, data?: any) {
   if (!DEBUG_MODE) return;
   
-  debugLog('debug', message, data);
-  
-  showToast("info", "Debug Info", {
-    description: message,
+  showToast('info', `Debug: ${message}`, {
+    description: data ? JSON.stringify(data).substring(0, 50) : undefined,
     duration: 3000
   });
+  
+  debugLog('debug', message, data);
 }
 
-// Function to check if WhatsApp Web is open and user is logged in
-export async function checkWhatsAppStatus(): Promise<{
-  isOpen: boolean;
-  isLoggedIn: boolean;
-  error?: string;
-}> {
-  if (!window.chrome?.tabs?.query) {
-    return { isOpen: false, isLoggedIn: false, error: "Chrome API not available" };
+// Function to check if WhatsApp is open and user is logged in
+export async function checkWhatsAppStatus(): Promise<{isOpen: boolean, isLoggedIn: boolean}> {
+  if (!window.chrome?.runtime?.sendMessage) {
+    return { isOpen: false, isLoggedIn: false };
   }
   
+  // Check if WhatsApp Web is open in any tab
   try {
-    // Check if WhatsApp Web is open
-    const tabs = await window.chrome.tabs.query({ url: "https://web.whatsapp.com/*" });
+    const tabs = await chrome.tabs.query({ url: "https://web.whatsapp.com/*" });
+    const isOpen = tabs.length > 0;
     
-    if (tabs.length === 0) {
+    if (!isOpen) {
+      debugLog('warn', 'WhatsApp Web is not open in any tab');
       return { isOpen: false, isLoggedIn: false };
     }
     
-    // WhatsApp is open, check if logged in
-    if (!window.chrome.scripting?.executeScript) {
-      return { isOpen: true, isLoggedIn: false, error: "Scripting API not available" };
-    }
-    
-    const [result] = await window.chrome.scripting.executeScript({
-      target: { tabId: tabs[0].id },
+    // If WhatsApp is open, check if user is logged in
+    const tab = tabs[0];
+    const [results] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
       func: () => {
-        // Check for login elements
-        const qrCode = document.querySelector('[data-testid="qrcode"]');
-        const intro = document.querySelector('[data-testid="intro-text"]');
-        // Check for elements that indicate we're logged in
-        const chatList = document.querySelector('[data-testid="chat-list"]');
-        
-        return {
-          hasQrCode: !!qrCode,
-          hasIntro: !!intro,
-          hasChatList: !!chatList
-        };
+        // Check for login indicators
+        const loginCheck = document.querySelector('[data-testid="intro-text"]') || 
+                          document.querySelector('[data-testid="qrcode"]');
+        return { isLoggedIn: !loginCheck };
       }
     });
     
-    const isLoggedIn = !result.result.hasQrCode && !result.result.hasIntro && result.result.hasChatList;
+    const isLoggedIn = results.result?.isLoggedIn || false;
+    debugLog('info', `WhatsApp status: isOpen=${isOpen}, isLoggedIn=${isLoggedIn}`);
     
-    return { isOpen: true, isLoggedIn };
+    return { isOpen, isLoggedIn };
   } catch (error) {
     debugLog('error', 'Error checking WhatsApp status', error);
-    return { 
-      isOpen: false, 
-      isLoggedIn: false, 
-      error: error instanceof Error ? error.message : String(error) 
-    };
+    return { isOpen: false, isLoggedIn: false };
   }
+}
+
+// Function to directly open a WhatsApp chat for testing
+export function openWhatsAppChat(number: string) {
+  if (!window.chrome?.tabs?.create) {
+    debugLog('error', 'Chrome API not available');
+    return;
+  }
+  
+  window.chrome.tabs.create({
+    url: `https://web.whatsapp.com/send?phone=${number}`,
+    active: true
+  });
 }

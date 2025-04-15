@@ -6,10 +6,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { showToast } from "@/lib/toast-utils";
-import { Send, Paperclip, FilePlus, FileX, AlertCircle } from "lucide-react";
+import { Send, Paperclip, FilePlus, FileX, AlertCircle, LogIn } from "lucide-react";
 import { motion } from "framer-motion";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { addMessageListener, handleMessagingResults, validateWhatsAppNumber } from '@/lib/messaging-utils';
+import { addMessageListener, handleMessagingResults, validateWhatsAppNumber, ensureWhatsAppWebIsOpen } from '@/lib/messaging-utils';
 import { debugLog, debugToast, checkWhatsAppStatus } from '@/lib/debug-utils';
 
 const BulkMessaging: React.FC = () => {
@@ -18,9 +18,13 @@ const BulkMessaging: React.FC = () => {
   const [delay, setDelay] = useState<number>(3);
   const [sending, setSending] = useState<boolean>(false);
   const [attachment, setAttachment] = useState<File | null>(null);
+  const [whatsappStatus, setWhatsappStatus] = useState<{isOpen: boolean, isLoggedIn: boolean} | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    // Check WhatsApp status on component mount
+    checkWhatsAppWeb();
+
     // Set up message listener for bulk message results
     const removeListener = addMessageListener('bulkMessageResults', (results) => {
       setSending(false);
@@ -32,6 +36,32 @@ const BulkMessaging: React.FC = () => {
       if (removeListener) removeListener();
     };
   }, []);
+
+  // Check WhatsApp Web status
+  const checkWhatsAppWeb = async () => {
+    try {
+      const status = await checkWhatsAppStatus();
+      setWhatsappStatus(status);
+      return status;
+    } catch (error) {
+      console.error("Error checking WhatsApp status:", error);
+      setWhatsappStatus({ isOpen: false, isLoggedIn: false });
+      return { isOpen: false, isLoggedIn: false };
+    }
+  };
+
+  // Open WhatsApp Web
+  const openWhatsAppWeb = async () => {
+    await ensureWhatsAppWebIsOpen();
+    setTimeout(async () => {
+      const status = await checkWhatsAppWeb();
+      if (status.isOpen) {
+        showToast('success', 'WhatsApp Web opened', {
+          description: 'Please ensure you are logged in before sending messages'
+        });
+      }
+    }, 3000);
+  };
 
   const validatePhoneNumbers = (): string[] => {
     // Split by commas, new lines, or spaces and remove empty strings
@@ -113,27 +143,27 @@ const BulkMessaging: React.FC = () => {
     }
 
     // Check if WhatsApp is open and user is logged in
-    const whatsappStatus = await checkWhatsAppStatus();
-    if (!whatsappStatus.isOpen) {
+    const status = await checkWhatsAppWeb();
+    if (!status.isOpen) {
       showToast("error", "WhatsApp Web is not open", {
         description: "Please open WhatsApp Web in a browser tab",
         duration: 6000,
         action: {
           label: "Open WhatsApp",
-          onClick: () => {
-            window.chrome?.tabs?.create({
-              url: "https://web.whatsapp.com/",
-              active: true
-            });
-          }
+          onClick: openWhatsAppWeb
         }
       });
       return;
     }
     
-    if (!whatsappStatus.isLoggedIn) {
+    if (!status.isLoggedIn) {
       showToast("error", "Not logged in to WhatsApp", {
-        description: "Please log in to WhatsApp Web"
+        description: "Please log in to WhatsApp Web",
+        duration: 6000,
+        action: {
+          label: "Open WhatsApp",
+          onClick: openWhatsAppWeb
+        }
       });
       return;
     }
@@ -197,7 +227,37 @@ const BulkMessaging: React.FC = () => {
     >
       <Card>
         <CardHeader>
-          <CardTitle>Bulk Message Sender</CardTitle>
+          <CardTitle className="flex items-center justify-between">
+            <span>Bulk Message Sender</span>
+            {whatsappStatus && (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      className={`ml-2 gap-1 ${whatsappStatus.isLoggedIn ? 'text-green-500' : 'text-amber-500'}`}
+                      onClick={openWhatsAppWeb}
+                    >
+                      <div className={`w-2 h-2 rounded-full ${whatsappStatus.isOpen ? (whatsappStatus.isLoggedIn ? 'bg-green-500' : 'bg-amber-500') : 'bg-red-500'}`} />
+                      <span className="text-xs font-normal">
+                        {whatsappStatus.isOpen 
+                          ? (whatsappStatus.isLoggedIn ? 'WhatsApp Ready' : 'Login Required') 
+                          : 'WhatsApp Closed'}
+                      </span>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">
+                    <p>
+                      {whatsappStatus.isOpen 
+                        ? (whatsappStatus.isLoggedIn ? 'WhatsApp Web is open and logged in' : 'Please log in to WhatsApp Web') 
+                        : 'Click to open WhatsApp Web'}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+          </CardTitle>
           <CardDescription>Send WhatsApp messages to multiple numbers at once</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -303,25 +363,34 @@ const BulkMessaging: React.FC = () => {
           </div>
         </CardContent>
         <CardFooter>
-          <Button
-            className="w-full bg-purple-700 hover:bg-purple-800"
-            onClick={handleSendBulkMessages}
-            disabled={sending || (!numbers.trim() || (!message.trim() && !attachment))}
-          >
-            {sending ? (
-              <>
-                <svg className="animate-spin -ml-1 mr-3 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                Sending...
-              </>
-            ) : (
-              <>
-                <Send className="mr-2 h-4 w-4" /> Send Bulk Messages
-              </>
-            )}
-          </Button>
+          {!whatsappStatus?.isOpen ? (
+            <Button
+              className="w-full bg-purple-700 hover:bg-purple-800"
+              onClick={openWhatsAppWeb}
+            >
+              <LogIn className="mr-2 h-4 w-4" /> Open WhatsApp Web
+            </Button>
+          ) : (
+            <Button
+              className="w-full bg-purple-700 hover:bg-purple-800"
+              onClick={handleSendBulkMessages}
+              disabled={sending || (!numbers.trim() || (!message.trim() && !attachment)) || !whatsappStatus?.isLoggedIn}
+            >
+              {sending ? (
+                <>
+                  <svg className="animate-spin -ml-1 mr-3 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Sending...
+                </>
+              ) : (
+                <>
+                  <Send className="mr-2 h-4 w-4" /> Send Bulk Messages
+                </>
+              )}
+            </Button>
+          )}
         </CardFooter>
       </Card>
     </motion.div>

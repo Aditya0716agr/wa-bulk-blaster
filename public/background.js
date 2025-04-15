@@ -10,10 +10,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           results: results
         });
       });
+    return true;
   } else if (message.action === "toggleAutoReply") {
     toggleAutoReply(message.data.enabled);
+    return true;
   } else if (message.action === "exportContacts") {
     exportContacts();
+    return true;
   } else if (message.action === "getGroups") {
     getGroups().then(groups => {
       sendResponse(groups);
@@ -27,8 +30,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           results: results
         });
       });
+    return true;
   } else if (message.action === "updateWelcomeMessage") {
     updateWelcomeMessage(message.data.welcomeMessage);
+    return true;
   } else if (message.action === "getBusinessLabels") {
     getBusinessLabels().then(labels => {
       sendResponse(labels);
@@ -42,19 +47,73 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           results: results
         });
       });
+    return true;
+  } else if (message.action === "contentScriptReady") {
+    console.log("Content script ready on:", message.data.url);
+    return true;
+  } else if (message.action === "openWhatsApp") {
+    chrome.tabs.create({
+      url: "https://web.whatsapp.com/",
+      active: true
+    });
+    return true;
   }
   
   return true; // Always return true to indicate async response
 });
 
 // Log that the background script has loaded
-console.log("WhatsApp Bulk Blaster background script loaded");
+console.log("WhatsApp Bulk Blaster background script loaded v1.0.3");
 
 // Function to send bulk messages
 async function sendBulkMessages(numbers, message, delay, attachment) {
   console.log("Starting to send bulk messages to:", numbers);
   const results = [];
   
+  // First, check if WhatsApp Web is open in any tab
+  let whatsAppTab = null;
+  try {
+    const tabs = await chrome.tabs.query({ url: "https://web.whatsapp.com/*" });
+    if (tabs.length > 0) {
+      whatsAppTab = tabs[0];
+      console.log("Found existing WhatsApp tab:", whatsAppTab.id);
+    } else {
+      // Open WhatsApp Web if not already open
+      whatsAppTab = await chrome.tabs.create({
+        url: "https://web.whatsapp.com/",
+        active: false
+      });
+      console.log("Created new WhatsApp tab:", whatsAppTab.id);
+      
+      // Wait for WhatsApp to load
+      await new Promise(r => setTimeout(r, 10000));
+    }
+  } catch (error) {
+    console.error("Error finding/creating WhatsApp tab:", error);
+    return [{ number: "Error", status: "failed", error: "Failed to access WhatsApp Web: " + error.message }];
+  }
+  
+  // Check if user is logged in to WhatsApp
+  try {
+    const [loginCheck] = await chrome.scripting.executeScript({
+      target: { tabId: whatsAppTab.id },
+      func: () => {
+        const loginElements = document.querySelector('[data-testid="intro-text"]') || 
+                            document.querySelector('[data-testid="qrcode"]');
+        return !!loginElements;
+      }
+    });
+    
+    if (loginCheck.result) {
+      console.error("User not logged in to WhatsApp Web");
+      return [{ number: "Error", status: "failed", error: "Please scan the QR code to log in to WhatsApp Web" }];
+    }
+  } catch (error) {
+    console.error("Error checking login status:", error);
+    return [{ number: "Error", status: "failed", error: "Failed to check login status: " + error.message }];
+  }
+  
+  // Process each number
   for (let i = 0; i < numbers.length; i++) {
     const number = numbers[i].trim();
     if (!number) continue;
@@ -62,20 +121,20 @@ async function sendBulkMessages(numbers, message, delay, attachment) {
     try {
       console.log(`Processing number ${i+1}/${numbers.length}: ${number}`);
       
-      // Open WhatsApp direct message link
-      const tab = await chrome.tabs.create({
-        url: `https://wa.me/${number}`,
+      // Navigate to the specific chat in the existing WhatsApp tab
+      await chrome.tabs.update(whatsAppTab.id, {
+        url: `https://web.whatsapp.com/send?phone=${number}`,
         active: false
       });
       
-      // Wait for page to load - increased wait time
-      await new Promise(r => setTimeout(r, 5000));
+      // Wait longer for the chat to load properly
+      await new Promise(r => setTimeout(r, 8000));
       
-      // Check if number is valid
+      // Check if number is valid by looking for invalid number message
       let isValid = true;
       try {
         const [validCheck] = await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
+          target: { tabId: whatsAppTab.id },
           func: () => {
             return !document.body.textContent.includes('phone number shared via link is not on WhatsApp');
           }
@@ -90,152 +149,65 @@ async function sendBulkMessages(numbers, message, delay, attachment) {
       if (!isValid) {
         console.log(`Number ${number} is invalid`);
         results.push({ number, status: 'invalid', error: 'Number not on WhatsApp' });
-        await chrome.tabs.remove(tab.id);
         continue;
       }
       
-      // Inject a script to send the message with attachment if provided
-      let sendResult;
+      // Send message directly using content script
       try {
-        const [result] = await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          func: async (messageText, attachmentData) => {
-            console.log("Executing script to send message:", messageText);
-            
-            // Click on "Continue to chat" button if it exists
-            const continueBtn = document.querySelector('a[title="Continue to Chat"]');
-            if (continueBtn) {
-              console.log("Clicking continue to chat button");
-              continueBtn.click();
-              await new Promise(r => setTimeout(r, 5000));
-            }
-            
-            // Now we should be in chat window, check if we're properly in WhatsApp Web
-            if (!window.location.href.includes('web.whatsapp.com')) {
-              return { success: false, error: 'Failed to open WhatsApp Web' };
-            }
-            
-            // Added longer delay to ensure WhatsApp Web is fully loaded
-            await new Promise(r => setTimeout(r, 5000));
-            
-            // Check if the user is logged in to WhatsApp Web
-            const loginCheck = document.querySelector('[data-testid="intro-text"]') || 
-                              document.querySelector('[data-testid="qrcode"]');
-            
-            if (loginCheck) {
-              return { success: false, error: 'Not logged in to WhatsApp Web' };
-            }
-            
-            // Handle attachment if provided
-            if (attachmentData) {
-              try {
-                // First, we need to click the attachment button
-                const attachButton = document.querySelector('[data-testid="attach-menu-icon"]') || 
-                                    document.querySelector('[data-icon="attach-menu-plus"]');
-                
-                if (!attachButton) {
-                  return { success: false, error: 'Attachment button not found' };
-                }
-                
-                attachButton.click();
-                await new Promise(r => setTimeout(r, 1000));
-                
-                // Create a blob from the base64 data
-                const binaryString = atob(attachmentData.data.split(',')[1]);
-                const bytes = new Uint8Array(binaryString.length);
-                for (let i = 0; i < binaryString.length; i++) {
-                  bytes[i] = binaryString.charCodeAt(i);
-                }
-                const blob = new Blob([bytes], { type: attachmentData.type });
-                
-                // Create a File object from the Blob
-                const file = new File([blob], attachmentData.name, { type: attachmentData.type });
-                
-                // Find the document/photo input
-                const fileInputSelector = 'input[type="file"]';
-                const fileInput = document.querySelector(fileInputSelector);
-                
-                if (!fileInput) {
-                  return { success: false, error: 'File input not found' };
-                }
-                
-                // Create a DataTransfer object and set the file
-                const dataTransfer = new DataTransfer();
-                dataTransfer.items.add(file);
-                fileInput.files = dataTransfer.files;
-                
-                // Trigger a change event
-                const event = new Event('change', { bubbles: true });
-                fileInput.dispatchEvent(event);
-                
-                // Wait for attachment to upload
-                await new Promise(r => setTimeout(r, 3000));
-              } catch (error) {
-                console.error('Attachment error:', error);
-                return { success: false, error: 'Failed to attach file: ' + error.message };
-              }
-            }
-            
-            // Add text message if provided
-            if (messageText) {
-              // Find the message input and add text
-              const messageInput = document.querySelector('[data-testid="compose-box-input"]');
-              if (messageInput) {
-                console.log("Found message input, adding text");
-                messageInput.focus();
-                // Use document.execCommand for compatibility
-                document.execCommand('insertText', false, messageText);
-                
-                // Trigger input event
-                const event = new Event('input', { bubbles: true });
-                messageInput.dispatchEvent(event);
-                
-                // Additional verification that text was entered
-                if (!messageInput.textContent && !messageInput.innerHTML) {
-                  console.error("Failed to insert text into input");
-                  
-                  // Alternative method to set text
-                  messageInput.textContent = messageText;
-                }
-              } else {
-                console.error("Message input not found");
-                return { success: false, error: 'Message input not found' };
-              }
-            }
-            
-            // Finally click the send button
-            await new Promise(r => setTimeout(r, 1000));
-            const sendButton = document.querySelector('[data-testid="send"]');
-            if (sendButton) {
-              console.log("Found send button, clicking it");
-              sendButton.click();
-              return { success: true };
-            } else {
-              console.error("Send button not found");
-              return { success: false, error: 'Send button not found' };
-            }
-          },
-          args: [message, attachment]
+        // Inject a script to send the message with attachment if provided
+        console.log("Executing script to send message");
+        const messageData = {
+          message: message,
+          attachment: attachment
+        };
+        
+        // Send message via content script
+        let sendResult;
+        
+        // First check if chat is loaded
+        const [chatLoadCheck] = await chrome.scripting.executeScript({
+          target: { tabId: whatsAppTab.id },
+          func: () => {
+            const inputField = document.querySelector('[data-testid="compose-box-input"]');
+            return !!inputField;
+          }
         });
         
-        sendResult = result.result;
+        if (!chatLoadCheck.result) {
+          console.log("Chat input not found, waiting longer...");
+          await new Promise(r => setTimeout(r, 5000));
+        }
+        
+        // Send message
+        const response = await new Promise((resolve) => {
+          chrome.tabs.sendMessage(whatsAppTab.id, {
+            action: "sendDirectMessage",
+            data: messageData
+          }, (result) => {
+            resolve(result || { success: false, error: "No response from content script" });
+          });
+          
+          // Set a timeout in case the content script doesn't respond
+          setTimeout(() => {
+            resolve({ success: false, error: "Content script timeout" });
+          }, 15000);
+        });
+        
+        sendResult = response;
         console.log("Send result:", sendResult);
-      } catch (e) {
-        console.error("Error executing script:", e);
-        sendResult = { success: false, error: e.message };
+        
+        // Log result
+        if (sendResult && sendResult.success) {
+          console.log(`Successfully sent message to ${number}`);
+          results.push({ number, status: 'success' });
+        } else {
+          console.log(`Failed to send message to ${number}:`, sendResult?.error || 'Unknown error');
+          results.push({ number, status: 'failed', error: sendResult?.error || 'Unknown error' });
+        }
+      } catch (error) {
+        console.error("Error sending message:", error);
+        results.push({ number, status: 'failed', error: error.message });
       }
-      
-      // Log result
-      if (sendResult && sendResult.success) {
-        console.log(`Successfully sent message to ${number}`);
-        results.push({ number, status: 'success' });
-      } else {
-        console.log(`Failed to send message to ${number}:`, sendResult?.error || 'Unknown error');
-        results.push({ number, status: 'failed', error: sendResult?.error || 'Unknown error' });
-      }
-      
-      // Close the tab
-      await chrome.tabs.remove(tab.id);
       
       // Wait for the delay specified by user
       await new Promise(r => setTimeout(r, delay * 1000));
@@ -243,15 +215,6 @@ async function sendBulkMessages(numbers, message, delay, attachment) {
     } catch (error) {
       console.error(`Error processing ${number}:`, error);
       results.push({ number, status: 'failed', error: error.message });
-      // Try to close tab if it was created but had errors
-      try {
-        const tabs = await chrome.tabs.query({ url: `https://wa.me/${number}` });
-        if (tabs.length > 0) {
-          await chrome.tabs.remove(tabs[0].id);
-        }
-      } catch (e) {
-        // Ignore errors when closing tabs
-      }
     }
   }
   
@@ -453,7 +416,7 @@ async function sendGroupMessages(groups, message, delay, attachment) {
                 const event = new Event('input', { bubbles: true });
                 messageInput.dispatchEvent(event);
                 
-                // Verify text was entered
+                // Additional verification that text was entered
                 if (!messageInput.textContent && !messageInput.innerHTML) {
                   console.error("Failed to insert text into input");
                   
