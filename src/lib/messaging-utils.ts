@@ -103,8 +103,8 @@ export function ensureWhatsAppWebIsOpen(): Promise<boolean> {
         // WhatsApp is already open, focus on that tab
         debugLog('info', "WhatsApp Web is already open");
         if (tabs[0].id) {
-          // Fixed: Use correct Chrome API typing for updating a tab
-          chrome.tabs.update(tabs[0].id, { active: true })
+          // Fixed: Use window.chrome to access chrome API correctly
+          window.chrome.tabs.update(tabs[0].id, { active: true })
             .then(() => {
               showToast("info", "WhatsApp Web tab activated", {
                 description: "Please ensure you're logged in before sending messages"

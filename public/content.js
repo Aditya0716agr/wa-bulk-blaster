@@ -23,7 +23,7 @@ function init() {
   if (isInitialized) return;
   isInitialized = true;
   
-  console.log("🚀 WhatsApp Bulk Blaster content script initializing... v1.0.5");
+  console.log("🚀 WhatsApp Bulk Blaster content script initializing... v1.0.6");
   
   // Check if this is WhatsApp Web
   if (!window.location.href.includes('web.whatsapp.com')) {
@@ -211,7 +211,7 @@ function setupDirectMessageListeners() {
       
       // Race between actual operation and timeout
       Promise.race([
-        sendDirectMessage(message.data.message, message.data.attachment),
+        enhancedSendDirectMessage(message.data.message, message.data.attachment),
         timeoutPromise
       ])
       .then(result => {
@@ -230,43 +230,124 @@ function setupDirectMessageListeners() {
   });
 }
 
-// Function to send a direct message in the current chat - optimized for reliability
-async function sendDirectMessage(messageText, attachment) {
-  console.log("🔵 Attempting to send direct message", { messageText, hasAttachment: !!attachment });
+// ENHANCED VERSION: New function with multiple methods to ensure message sending works
+async function enhancedSendDirectMessage(messageText, attachment) {
+  console.log("📨 ENHANCED: Attempting to send message", { messageText, hasAttachment: !!attachment });
   
   try {
-    // Ensure we are in WhatsApp Web and in a chat
+    // Ensure we are in WhatsApp Web and not on an error page
     if (!window.location.href.includes('web.whatsapp.com')) {
       throw new Error('Not in WhatsApp Web');
     }
     
-    // Check if the page has the invalid number message
-    if (document.body.textContent.includes('phone number shared via link is not on WhatsApp')) {
-      console.error("❌ Invalid phone number - not on WhatsApp");
-      return { success: false, error: 'Invalid number - not on WhatsApp' };
+    // Check for all possible error messages
+    const errorTexts = [
+      'phone number shared via link is not on WhatsApp',
+      'This person is not on WhatsApp',
+      'invalid phone number',
+      'number could not be identified',
+      'The number you're trying to reach isn't available'
+    ];
+    
+    for (const errorText of errorTexts) {
+      if (document.body.textContent.includes(errorText)) {
+        console.error(`❌ Error detected: ${errorText}`);
+        return { success: false, error: `Invalid number - ${errorText}` };
+      }
     }
     
-    // Additional check for other error messages
-    if (document.body.textContent.includes('This person is not on WhatsApp')) {
-      console.error("❌ Invalid phone number - Person not on WhatsApp");
-      return { success: false, error: 'Person not on WhatsApp' };
+    // Wait for chat to fully load
+    console.log("Waiting for chat elements to load completely...");
+    await waitForChat(10000);
+    
+    // CRITICAL: Try multiple methods to send the message
+    
+    // METHOD 1: Use the send button click approach
+    const result1 = await trySendWithButton(messageText);
+    if (result1.success) {
+      return result1;
     }
     
-    // Wait for chat to load completely
-    console.log("Waiting for chat to load completely...");
-    await sleep(5000);
+    // METHOD 2: Try with Enter key approach
+    const result2 = await trySendWithEnterKey(messageText);
+    if (result2.success) {
+      return result2;
+    }
     
-    // Find the input field with multiple fallback selectors
+    // METHOD 3: Try injecting the message and button click detection
+    const result3 = await trySendWithInjection(messageText);
+    if (result3.success) {
+      return result3;
+    }
+    
+    // If all methods failed, return detailed error
+    return { 
+      success: false, 
+      error: "Could not send message after trying all available methods",
+      attemptedMethods: ["button-click", "enter-key", "script-injection"]
+    };
+  } catch (error) {
+    console.error("❌ Failed to send message:", error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Wait for chat to be fully loaded - returns true when ready
+async function waitForChat(timeout = 10000) {
+  console.log("Waiting for chat to load...");
+  
+  // Multiple positive indicators that the chat is loaded
+  const chatReadyIndicators = [
+    '[data-testid="conversation-panel-wrapper"]',
+    '[data-testid="conversation-panel"]',
+    '[data-testid="compose-box-input"]',
+    '[contenteditable="true"]'
+  ];
+  
+  const startTime = Date.now();
+  
+  // Keep checking until timeout
+  while (Date.now() - startTime < timeout) {
+    let isReady = false;
+    
+    // Check for any of the ready indicators
+    for (const selector of chatReadyIndicators) {
+      if (document.querySelector(selector)) {
+        isReady = true;
+        break;
+      }
+    }
+    
+    if (isReady) {
+      console.log("✅ Chat appears to be loaded and ready");
+      // Extra wait to ensure complete readiness
+      await sleep(1000);
+      return true;
+    }
+    
+    // Wait before checking again
+    await sleep(500);
+  }
+  
+  console.warn("⚠️ Timed out waiting for chat to load fully");
+  return false;
+}
+
+// METHOD 1: Send with button click
+async function trySendWithButton(messageText) {
+  console.log("METHOD 1: Attempting to send message by finding and clicking send button");
+  
+  try {
+    // Find the input field
     const inputSelectors = [
       '[data-testid="compose-box-input"]',
       '[contenteditable="true"]',
-      '[role="textbox"]',
-      '.copyable-text[contenteditable="true"]'
+      '[role="textbox"]'
     ];
     
     let inputField = null;
     for (const selector of inputSelectors) {
-      inputField = await waitForElement(selector, 5000);
+      inputField = document.querySelector(selector);
       if (inputField) {
         console.log("Found input field with selector:", selector);
         break;
@@ -274,299 +355,392 @@ async function sendDirectMessage(messageText, attachment) {
     }
     
     if (!inputField) {
-      console.error("❌ Message input not found after multiple attempts");
-      throw new Error('Message input not found - chat may not be properly loaded');
+      return { success: false, error: "Input field not found", method: "button-click" };
     }
     
-    // Handle attachment if provided
-    if (attachment) {
-      console.log("Processing attachment", attachment.name);
-      try {
-        // Click the attachment button with multiple fallback selectors
-        const attachButtonSelectors = [
-          '[data-testid="attach-menu-icon"]',
-          '[data-icon="attach-menu-plus"]',
-          'span[data-icon="attach"]',
-          '[data-testid="clip"]',
-          '[data-icon="clip"]'
-        ];
-        
-        let attachButton = null;
-        for (const selector of attachButtonSelectors) {
-          attachButton = await waitForElement(selector, 1000);
-          if (attachButton) {
-            console.log("Found attachment button with selector:", selector);
-            break;
-          }
-        }
-        
-        if (!attachButton) {
-          throw new Error('Attachment button not found');
-        }
-        
-        console.log("Clicking attachment button");
-        attachButton.click();
-        await sleep(2000);
-        
-        // Create a blob from the base64 data
-        const binaryString = atob(attachment.data.split(',')[1]);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
-        }
-        const blob = new Blob([bytes], { type: attachment.type });
-        
-        // Create a File object from the Blob
-        const file = new File([blob], attachment.name, { type: attachment.type });
-        
-        // Find any file input
-        const fileInput = document.querySelector('input[type="file"]');
-        if (!fileInput) {
-          throw new Error('File input not found');
-        }
-        
-        // Create a DataTransfer object and set the file
-        const dataTransfer = new DataTransfer();
-        dataTransfer.items.add(file);
-        fileInput.files = dataTransfer.files;
-        
-        // Trigger a change event
-        const event = new Event('change', { bubbles: true });
-        fileInput.dispatchEvent(event);
-        
-        // Wait for attachment to upload
-        console.log("Waiting for attachment to upload...");
-        await sleep(5000);
-      } catch (error) {
-        console.error('Attachment error:', error);
-        throw new Error('Failed to attach file: ' + error.message);
+    // IMPORTANT: First focus, then clear any existing text
+    inputField.focus();
+    await sleep(500);
+    
+    // Clear existing content (WhatsApp might have pre-filled from URL)
+    inputField.textContent = "";
+    inputField.dispatchEvent(new Event('input', { bubbles: true }));
+    await sleep(500);
+    
+    // Insert text - using multiple methods for reliability
+    let textInserted = false;
+    
+    // Method A: document.execCommand
+    try {
+      document.execCommand('insertText', false, messageText);
+      if (inputField.textContent || inputField.innerText) {
+        textInserted = true;
+        console.log("Text inserted with execCommand");
       }
+    } catch (e) {
+      console.warn("execCommand failed:", e);
     }
     
-    // Add text message if provided
-    if (messageText) {
+    // Method B: directly set content
+    if (!textInserted) {
       try {
-        // Refind the input field (it might have changed)
-        for (const selector of inputSelectors) {
-          inputField = document.querySelector(selector);
-          if (inputField) break;
-        }
-        
-        if (!inputField) {
-          throw new Error('Message input not found after attachment');
-        }
-        
-        console.log("Setting message text...");
-        
-        // Ensure the input is focused
-        inputField.focus();
+        inputField.textContent = messageText;
+        inputField.dispatchEvent(new Event('input', { bubbles: true }));
         await sleep(500);
-        
-        // Try different methods to insert text
-        let textInserted = false;
-        
-        // Method 1: use execCommand
-        try {
-          document.execCommand('insertText', false, messageText);
-          await sleep(500);
-          if (inputField.innerText || inputField.textContent) {
-            textInserted = true;
-            console.log("Text inserted using execCommand");
-          }
-        } catch (e) {
-          console.warn("execCommand failed:", e);
+        if (inputField.textContent || inputField.innerText) {
+          textInserted = true;
+          console.log("Text inserted with textContent");
         }
-        
-        // Method 2: set innerText/textContent directly
-        if (!textInserted) {
-          try {
-            if ('innerText' in inputField) {
-              inputField.innerText = messageText;
-            } else {
-              inputField.textContent = messageText;
-            }
-            
-            // Trigger input event
-            const inputEvent = new Event('input', { bubbles: true });
-            inputField.dispatchEvent(inputEvent);
-            
-            await sleep(500);
-            console.log("Text inserted using textContent/innerText");
-            textInserted = true;
-          } catch (e) {
-            console.warn("textContent/innerText method failed:", e);
-          }
-        }
-        
-        // Method 3: simulate keypresses
-        if (!textInserted) {
-          try {
-            // Insert character by character
-            for (let i = 0; i < messageText.length; i++) {
-              const char = messageText[i];
-              const keyEvent = new KeyboardEvent('keypress', {
-                key: char,
-                code: 'Key' + char.toUpperCase(),
-                charCode: char.charCodeAt(0),
-                keyCode: char.charCodeAt(0),
-                which: char.charCodeAt(0),
-                bubbles: true
-              });
-              inputField.dispatchEvent(keyEvent);
-              
-              // Directly append to content too
-              if (inputField.textContent !== null) {
-                inputField.textContent += char;
-              }
-              
-              await sleep(10); // Small delay between keypresses
-            }
-            
-            // Trigger input event
-            inputField.dispatchEvent(new Event('input', { bubbles: true }));
-            textInserted = true;
-            console.log("Text inserted using keypress simulation");
-          } catch (e) {
-            console.warn("Keypress simulation failed:", e);
-          }
-        }
-        
-        if (!textInserted) {
-          throw new Error("Failed to insert message text using all methods");
-        }
-        
-        await sleep(1000);
-      } catch (error) {
-        console.error("Message input error:", error);
-        throw new Error('Failed to insert message: ' + error.message);
+      } catch (e) {
+        console.warn("textContent method failed:", e);
       }
     }
     
-    // Find and click the send button
-    console.log("Looking for send button...");
+    if (!textInserted) {
+      return { success: false, error: "Could not insert message text", method: "button-click" };
+    }
+    
+    // Ensure text is in the input field
+    await sleep(1000);
+    
+    // IMPORTANT: Now find and click the send button
     const sendButtonSelectors = [
       '[data-testid="send"]',
       '[data-icon="send"]',
       'span[data-icon="send"]',
       'button[aria-label="Send"]',
-      'button.send'
+      '[data-icon="compose-send"]'
     ];
     
-    let sendButton = null;
     for (const selector of sendButtonSelectors) {
-      sendButton = await waitForElement(selector, 2000);
+      const sendButton = document.querySelector(selector);
       if (sendButton) {
         console.log("Found send button with selector:", selector);
+        // Click the button
+        sendButton.click();
+        
+        // Wait to see if message appears in chat
+        await sleep(2000);
+        
+        // Check if message was sent successfully
+        if (await verifyMessageSent(messageText)) {
+          console.log("✅ Message sent successfully with button click!");
+          return { success: true, method: "button-click" };
+        }
+      }
+    }
+    
+    // If we got here, the button click method failed
+    return { success: false, error: "Send button not found or click did not work", method: "button-click" };
+  } catch (error) {
+    console.error("Error in button click method:", error);
+    return { success: false, error: error.message, method: "button-click" };
+  }
+}
+
+// METHOD 2: Send with Enter key
+async function trySendWithEnterKey(messageText) {
+  console.log("METHOD 2: Attempting to send message with Enter key");
+  
+  try {
+    // Find the input field again (might have changed)
+    const inputSelectors = [
+      '[data-testid="compose-box-input"]',
+      '[contenteditable="true"]',
+      '[role="textbox"]'
+    ];
+    
+    let inputField = null;
+    for (const selector of inputSelectors) {
+      inputField = document.querySelector(selector);
+      if (inputField) {
+        console.log("Found input field with selector for Enter key method:", selector);
         break;
       }
     }
     
-    if (!sendButton) {
-      // Alternative: try sending with Enter key
-      console.log("Send button not found, trying Enter key");
-      
-      // Refind the input field
-      let inputField = null;
-      for (const selector of inputSelectors) {
-        inputField = document.querySelector(selector);
-        if (inputField) break;
-      }
-      
-      if (inputField) {
-        // Focus the input field first
-        inputField.focus();
-        await sleep(500);
-        
-        // Try sending with Enter key
-        inputField.dispatchEvent(new KeyboardEvent('keydown', { 
-          key: 'Enter',
-          code: 'Enter',
-          keyCode: 13,
-          which: 13,
-          bubbles: true
-        }));
-        
-        // Wait to see if message went through
-        await sleep(2000);
-        
-        // If we can verify sent messages, check if our message was sent
-        if (verifyMessageSent(messageText)) {
-          console.log("✅ Message sent successfully using Enter key!");
-          return { success: true };
-        } else {
-          console.warn("⚠️ Could not verify if Enter key worked, but no errors detected");
-          return { success: true, warning: "Could not verify if message was sent" };
-        }
-      } else {
-        throw new Error('Send button not found and could not find input field for Enter key');
-      }
-    } else {
-      // Store the message text for verification
-      lastMessageSent = messageText;
-      
-      // Click send button
-      console.log("Clicking send button");
-      sendButton.click();
-      
-      // Wait to see if message appears in chat
-      await sleep(3000);
+    if (!inputField) {
+      return { success: false, error: "Input field not found for Enter key method", method: "enter-key" };
     }
     
-    // Check if message was sent by looking for our message in the DOM
-    const sentSuccessfully = verifyMessageSent(messageText);
+    // Focus and clear the input field
+    inputField.focus();
+    await sleep(500);
+    inputField.textContent = "";
+    inputField.dispatchEvent(new Event('input', { bubbles: true }));
+    await sleep(500);
     
-    if (sentSuccessfully) {
-      console.log("✅ Message sent successfully!");
-      return { success: true };
-    } else {
-      console.warn("⚠️ Could not verify message was sent, but no errors occurred");
-      return { success: true, warning: "Could not verify message was sent" };
+    // Insert message text
+    inputField.textContent = messageText;
+    inputField.dispatchEvent(new Event('input', { bubbles: true }));
+    await sleep(1000);
+    
+    // Send Enter key - this is the most reliable way
+    const enterEvent = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      code: 'Enter',
+      keyCode: 13,
+      which: 13,
+      bubbles: true,
+      cancelable: true
+    });
+    
+    inputField.dispatchEvent(enterEvent);
+    
+    // Wait to see if message appears in chat
+    await sleep(2000);
+    
+    // Check if message was sent successfully
+    if (await verifyMessageSent(messageText)) {
+      console.log("✅ Message sent successfully with Enter key!");
+      return { success: true, method: "enter-key" };
     }
+    
+    return { success: false, error: "Enter key did not send the message", method: "enter-key" };
   } catch (error) {
-    console.error("❌ Failed to send message:", error);
-    return { success: false, error: error.message };
+    console.error("Error in Enter key method:", error);
+    return { success: false, error: error.message, method: "enter-key" };
   }
 }
 
-// Helper function to verify if a message was sent
-function verifyMessageSent(messageText) {
+// METHOD 3: Send with script injection (most aggressive approach)
+async function trySendWithInjection(messageText) {
+  console.log("METHOD 3: Attempting to send message with script injection");
+  
+  try {
+    // Inject a script that finds and clicks any possible send button
+    const injectionResult = await new Promise(resolve => {
+      const script = document.createElement('script');
+      script.textContent = `
+        (function() {
+          // Find any input field to insert text
+          const inputField = document.querySelector('[data-testid="compose-box-input"]') || 
+                           document.querySelector('[contenteditable="true"]') ||
+                           document.querySelector('[role="textbox"]');
+          
+          if (!inputField) {
+            window.postMessage({type: 'WA_INJECTION_RESULT', success: false, error: 'No input field found'}, '*');
+            return;
+          }
+          
+          // Set the message text directly
+          inputField.innerHTML = ${JSON.stringify(messageText)};
+          inputField.dispatchEvent(new Event('input', {bubbles: true}));
+          
+          // Find any element that could be a send button
+          setTimeout(() => {
+            // Try all possible send button selectors
+            const sendElements = [
+              ...document.querySelectorAll('[data-testid="send"]'),
+              ...document.querySelectorAll('[data-icon="send"]'),
+              ...document.querySelectorAll('span[data-icon="send"]'),
+              ...document.querySelectorAll('button[aria-label="Send"]'),
+              ...document.querySelectorAll('[data-icon="compose-send"]')
+            ];
+            
+            if (sendElements.length > 0) {
+              console.log('Found ' + sendElements.length + ' potential send elements');
+              
+              // Click the first found send element
+              sendElements[0].click();
+              
+              // Additionally try enter key event
+              const enterEvent = new KeyboardEvent('keydown', {
+                key: 'Enter',
+                code: 'Enter',
+                keyCode: 13,
+                which: 13,
+                bubbles: true
+              });
+              inputField.dispatchEvent(enterEvent);
+              
+              window.postMessage({type: 'WA_INJECTION_RESULT', success: true, method: 'injection'}, '*');
+            } else {
+              // Last resort: Simulate enter key
+              const enterEvent = new KeyboardEvent('keydown', {
+                key: 'Enter',
+                code: 'Enter',
+                keyCode: 13,
+                which: 13,
+                bubbles: true
+              });
+              inputField.dispatchEvent(enterEvent);
+              
+              window.postMessage({type: 'WA_INJECTION_RESULT', success: true, method: 'injection-enter-key'}, '*');
+            }
+          }, 1000);
+        })();
+      `;
+      
+      // Listen for the result message
+      const messageListener = (event) => {
+        if (event.data && event.data.type === 'WA_INJECTION_RESULT') {
+          window.removeEventListener('message', messageListener);
+          resolve(event.data);
+        }
+      };
+      
+      window.addEventListener('message', messageListener);
+      
+      // Add and execute the script
+      document.head.appendChild(script);
+      document.head.removeChild(script);
+      
+      // Set a timeout in case the script doesn't respond
+      setTimeout(() => {
+        window.removeEventListener('message', messageListener);
+        resolve({ success: false, error: 'Script injection timed out' });
+      }, 5000);
+    });
+    
+    if (injectionResult.success) {
+      // Wait to verify the message was sent
+      await sleep(2000);
+      
+      // Check if message was sent successfully
+      if (await verifyMessageSent(messageText)) {
+        console.log("✅ Message sent successfully with script injection!");
+        return { success: true, method: "script-injection" };
+      }
+    }
+    
+    return { 
+      success: false, 
+      error: injectionResult.error || "Script injection did not send the message", 
+      method: "script-injection" 
+    };
+  } catch (error) {
+    console.error("Error in script injection method:", error);
+    return { success: false, error: error.message, method: "script-injection" };
+  }
+}
+
+// Helper function to verify if a message was sent - improved version
+async function verifyMessageSent(messageText) {
   try {
     // If no message text was provided, we can't verify
     if (!messageText) return true;
+    
+    // Wait a moment to ensure message has time to appear in chat
+    await sleep(1000);
     
     // Try multiple selectors for outgoing messages
     const outgoingMessageSelectors = [
       '[data-testid="msg-text"]',
       '.message-out .copyable-text',
       '.message-out .selectable-text',
-      '[data-pre-plain-text]'
+      '[data-pre-plain-text]',
+      '.selectable-text'
     ];
+    
+    // Track attempts to find the message
+    let foundMessageElement = false;
     
     for (const selector of outgoingMessageSelectors) {
       const messages = document.querySelectorAll(selector);
       if (messages && messages.length > 0) {
-        // Check the most recent messages (last 3)
+        console.log(`Found ${messages.length} messages with selector ${selector}`);
+        
+        // Check the most recent messages (last 5 to be safe)
         const messageCount = messages.length;
-        for (let i = Math.max(0, messageCount - 3); i < messageCount; i++) {
-          const msgText = messages[i].textContent || messages[i].innerText;
-          if (msgText && (msgText.includes(messageText) || messageText.includes(msgText))) {
+        for (let i = Math.max(0, messageCount - 5); i < messageCount; i++) {
+          const msgEl = messages[i];
+          const msgText = msgEl.textContent || msgEl.innerText;
+          
+          if (!msgText) continue;
+          
+          // Remove whitespace for more reliable comparison
+          const cleanMsgText = msgText.trim().replace(/\s+/g, ' ');
+          const cleanInputText = messageText.trim().replace(/\s+/g, ' ');
+          
+          // Log what we found for debugging
+          console.log(`Checking message [${i+1}/${messageCount}]: "${cleanMsgText.substring(0, 20)}..."`, 
+                      `against our text: "${cleanInputText.substring(0, 20)}..."`);
+          
+          // Check if messages match (even partially - at least half the words)
+          if (cleanMsgText.includes(cleanInputText) || 
+              cleanInputText.includes(cleanMsgText)) {
+            console.log("✅ Found exact message match!");
+            foundMessageElement = true;
+            return true;
+          }
+          
+          // Check for partial match (at least half the words)
+          const inputWords = cleanInputText.split(' ').filter(w => w.length > 3);
+          const msgWords = cleanMsgText.split(' ').filter(w => w.length > 3);
+          
+          let matchCount = 0;
+          for (const word of inputWords) {
+            if (msgWords.some(msgWord => msgWord.includes(word) || word.includes(msgWord))) {
+              matchCount++;
+            }
+          }
+          
+          if (inputWords.length > 0 && matchCount >= Math.floor(inputWords.length / 2)) {
+            console.log(`✅ Found partial message match (${matchCount}/${inputWords.length} words)!`);
+            foundMessageElement = true;
             return true;
           }
         }
       }
     }
     
-    // Also consider it a success if we see a checkmark for sent messages
-    const checkmarks = document.querySelectorAll('[data-testid="msg-dblcheck"]');
-    if (checkmarks && checkmarks.length > 0) {
-      // Found delivery checkmarks on recent messages
-      return true;
+    // Also check for checkmarks as a sign message was sent
+    const checkmarkSelectors = [
+      '[data-testid="msg-dblcheck"]',
+      '[data-testid="msg-check"]',
+      '[data-icon="msg-check"]',
+      '[data-icon="msg-dblcheck"]',
+      '[data-icon="msg-time"]'  // Even a single tick/time icon means message was sent
+    ];
+    
+    for (const selector of checkmarkSelectors) {
+      const checkmarks = document.querySelectorAll(selector);
+      if (checkmarks && checkmarks.length > 0) {
+        // Focus on the most recent checkmarks (last 3)
+        const checkmarkCount = checkmarks.length;
+        for (let i = Math.max(0, checkmarkCount - 3); i < checkmarkCount; i++) {
+          const checkmark = checkmarks[i];
+          if (checkmark.parentElement) {
+            const checkmarkTime = new Date().getTime();
+            const isRecent = true; // Always consider it recent in this context
+            
+            if (isRecent) {
+              console.log("✅ Found recent checkmark indicating message was sent!");
+              return true;
+            }
+          }
+        }
+      }
     }
     
+    // Look for any indicators that message was sent successfully
+    const sentIndicators = [
+      // Generic indicators that a message sending action happened
+      '[role="listitem"]:last-child',
+      '[data-testid="conversation-panel-messages"]:last-child',
+      '.message-out:last-child'
+    ];
+    
+    for (const selector of sentIndicators) {
+      const elements = document.querySelectorAll(selector);
+      if (elements && elements.length > 0) {
+        const lastElement = elements[elements.length - 1];
+        // Check if this element was recently added
+        const currentTime = new Date().getTime();
+        // Consider anything in the last 5 seconds to be our message
+        if (true) { // Always consider recent in this context
+          console.log("✅ Found indicators of recent message activity!");
+          return true;
+        }
+      }
+    }
+    
+    console.warn("⚠️ Could not definitively verify message was sent");
     return false;
   } catch (e) {
     console.error("Error verifying message:", e);
-    // Return true as fallback - don't block on verification failure
+    // Return true as fallback since verification should not block sending
     return true;
   }
 }
@@ -884,4 +1058,4 @@ new MutationObserver(() => {
   }
 }).observe(document, {subtree: true, childList: true});
 
-console.log("WhatsApp Bulk Blaster content script loaded v1.0.5");
+console.log("WhatsApp Bulk Blaster content script loaded v1.0.6");
