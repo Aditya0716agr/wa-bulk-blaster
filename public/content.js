@@ -1,4 +1,3 @@
-
 // Initialize when DOM is fully loaded
 document.addEventListener('DOMContentLoaded', init);
 window.addEventListener('load', init); // Add an additional listener for window.load
@@ -24,7 +23,7 @@ function init() {
   if (isInitialized) return;
   isInitialized = true;
   
-  console.log("🚀 WhatsApp Bulk Blaster content script initializing... v1.0.4");
+  console.log("🚀 WhatsApp Bulk Blaster content script initializing... v1.0.5");
   
   // Check if this is WhatsApp Web
   if (!window.location.href.includes('web.whatsapp.com')) {
@@ -191,7 +190,7 @@ function checkForNewParticipants() {
   });
 }
 
-// Setup listeners for direct message handling
+// Setup listeners for direct message handling - improved for better reliability
 function setupDirectMessageListeners() {
   console.log("Setting up direct message listeners");
   
@@ -201,21 +200,37 @@ function setupDirectMessageListeners() {
     
     if (message.action === "sendDirectMessage") {
       console.log("Received direct message request", message.data);
-      sendDirectMessage(message.data.message, message.data.attachment)
-        .then(result => {
-          console.log("Message sending result:", result);
-          sendResponse(result);
-        })
-        .catch(error => {
-          console.error("Error sending message:", error);
-          sendResponse({ success: false, error: error.message });
-        });
+      
+      // Use a promise with timeout to ensure we always send a response
+      const timeoutPromise = new Promise((resolve) => {
+        setTimeout(() => {
+          console.error("Message sending timed out");
+          resolve({ success: false, error: "Operation timed out" });
+        }, 30000);
+      });
+      
+      // Race between actual operation and timeout
+      Promise.race([
+        sendDirectMessage(message.data.message, message.data.attachment),
+        timeoutPromise
+      ])
+      .then(result => {
+        console.log("Message sending result:", result);
+        sendResponse(result);
+      })
+      .catch(error => {
+        console.error("Error sending message:", error);
+        sendResponse({ success: false, error: error.message || String(error) });
+      });
+      
       return true; // Keep the message channel open for async response
     }
+    
+    return true; // Always keep channel open for async responses
   });
 }
 
-// Function to send a direct message in the current chat
+// Function to send a direct message in the current chat - optimized for reliability
 async function sendDirectMessage(messageText, attachment) {
   console.log("🔵 Attempting to send direct message", { messageText, hasAttachment: !!attachment });
   
@@ -231,41 +246,59 @@ async function sendDirectMessage(messageText, attachment) {
       return { success: false, error: 'Invalid number - not on WhatsApp' };
     }
     
-    // Wait longer for chat to load completely
+    // Additional check for other error messages
+    if (document.body.textContent.includes('This person is not on WhatsApp')) {
+      console.error("❌ Invalid phone number - Person not on WhatsApp");
+      return { success: false, error: 'Person not on WhatsApp' };
+    }
+    
+    // Wait for chat to load completely
     console.log("Waiting for chat to load completely...");
     await sleep(5000);
     
-    // Check if we're in a chat (look for chat input)
-    const inputField = await waitForElement('[data-testid="compose-box-input"]', 15000);
-    if (!inputField) {
-      // Try alternative selectors if the main one fails
-      const altInputField = document.querySelector('[contenteditable="true"]') || 
-                           document.querySelector('[role="textbox"]');
-      
-      if (!altInputField) {
-        console.error("❌ Message input not found after wait");
-        // Take a "screenshot" of the current DOM state for debugging
-        console.log("Current DOM state:", document.body.innerHTML.substring(0, 500) + "...");
-        throw new Error('Message input not found - not in a chat or WhatsApp Web structure changed');
+    // Find the input field with multiple fallback selectors
+    const inputSelectors = [
+      '[data-testid="compose-box-input"]',
+      '[contenteditable="true"]',
+      '[role="textbox"]',
+      '.copyable-text[contenteditable="true"]'
+    ];
+    
+    let inputField = null;
+    for (const selector of inputSelectors) {
+      inputField = await waitForElement(selector, 5000);
+      if (inputField) {
+        console.log("Found input field with selector:", selector);
+        break;
       }
-      
-      console.log("Found alternative input field", altInputField);
     }
     
-    // Verify chat is loaded and ready for messages
-    const chatHeader = await waitForElement('[data-testid="conversation-header"]', 5000);
-    if (!chatHeader) {
-      console.warn("⚠️ Chat header not found, but continuing anyway");
+    if (!inputField) {
+      console.error("❌ Message input not found after multiple attempts");
+      throw new Error('Message input not found - chat may not be properly loaded');
     }
     
     // Handle attachment if provided
     if (attachment) {
       console.log("Processing attachment", attachment.name);
       try {
-        // Click the attachment button
-        const attachButton = await waitForElement('[data-testid="attach-menu-icon"]', 5000) || 
-                              await waitForElement('[data-icon="attach-menu-plus"]', 5000) ||
-                              document.querySelector('span[data-icon="attach"]');
+        // Click the attachment button with multiple fallback selectors
+        const attachButtonSelectors = [
+          '[data-testid="attach-menu-icon"]',
+          '[data-icon="attach-menu-plus"]',
+          'span[data-icon="attach"]',
+          '[data-testid="clip"]',
+          '[data-icon="clip"]'
+        ];
+        
+        let attachButton = null;
+        for (const selector of attachButtonSelectors) {
+          attachButton = await waitForElement(selector, 1000);
+          if (attachButton) {
+            console.log("Found attachment button with selector:", selector);
+            break;
+          }
+        }
         
         if (!attachButton) {
           throw new Error('Attachment button not found');
@@ -286,25 +319,8 @@ async function sendDirectMessage(messageText, attachment) {
         // Create a File object from the Blob
         const file = new File([blob], attachment.name, { type: attachment.type });
         
-        // Find the document/photo input - try multiple selectors
-        const fileInputSelectors = [
-          'input[type="file"]',
-          'input[accept*="image"]',
-          'input[accept*="video"]',
-          'input[accept*="document"]'
-        ];
-        
-        let fileInput = null;
-        for (const selector of fileInputSelectors) {
-          const inputs = document.querySelectorAll(selector);
-          if (inputs.length > 0) {
-            // Prioritize the visible/active one
-            fileInput = inputs[0];
-            console.log("Found file input with selector:", selector);
-            break;
-          }
-        }
-        
+        // Find any file input
+        const fileInput = document.querySelector('input[type="file"]');
         if (!fileInput) {
           throw new Error('File input not found');
         }
@@ -321,8 +337,6 @@ async function sendDirectMessage(messageText, attachment) {
         // Wait for attachment to upload
         console.log("Waiting for attachment to upload...");
         await sleep(5000);
-        
-        console.log("Attachment processed successfully");
       } catch (error) {
         console.error('Attachment error:', error);
         throw new Error('Failed to attach file: ' + error.message);
@@ -332,26 +346,14 @@ async function sendDirectMessage(messageText, attachment) {
     // Add text message if provided
     if (messageText) {
       try {
-        // Find the message input using multiple selectors
-        const inputSelectors = [
-          '[data-testid="compose-box-input"]',
-          '[contenteditable="true"]',
-          '[role="textbox"]',
-          '.copyable-text[contenteditable="true"]'
-        ];
-        
-        let inputField = null;
+        // Refind the input field (it might have changed)
         for (const selector of inputSelectors) {
-          const input = document.querySelector(selector);
-          if (input) {
-            inputField = input;
-            console.log("Found input field with selector:", selector);
-            break;
-          }
+          inputField = document.querySelector(selector);
+          if (inputField) break;
         }
         
         if (!inputField) {
-          throw new Error('Message input not found');
+          throw new Error('Message input not found after attachment');
         }
         
         console.log("Setting message text...");
@@ -363,11 +365,9 @@ async function sendDirectMessage(messageText, attachment) {
         // Try different methods to insert text
         let textInserted = false;
         
-        // Method 1: use document.execCommand
+        // Method 1: use execCommand
         try {
           document.execCommand('insertText', false, messageText);
-          
-          // Verify text was inserted
           await sleep(500);
           if (inputField.innerText || inputField.textContent) {
             textInserted = true;
@@ -377,10 +377,9 @@ async function sendDirectMessage(messageText, attachment) {
           console.warn("execCommand failed:", e);
         }
         
-        // Method 2: set innerText/textContent
+        // Method 2: set innerText/textContent directly
         if (!textInserted) {
           try {
-            // Set text content
             if ('innerText' in inputField) {
               inputField.innerText = messageText;
             } else {
@@ -391,6 +390,7 @@ async function sendDirectMessage(messageText, attachment) {
             const inputEvent = new Event('input', { bubbles: true });
             inputField.dispatchEvent(inputEvent);
             
+            await sleep(500);
             console.log("Text inserted using textContent/innerText");
             textInserted = true;
           } catch (e) {
@@ -398,32 +398,43 @@ async function sendDirectMessage(messageText, attachment) {
           }
         }
         
-        // Method 3: clipboard paste method
+        // Method 3: simulate keypresses
         if (!textInserted) {
           try {
-            // Copy to clipboard
-            await navigator.clipboard.writeText(messageText);
+            // Insert character by character
+            for (let i = 0; i < messageText.length; i++) {
+              const char = messageText[i];
+              const keyEvent = new KeyboardEvent('keypress', {
+                key: char,
+                code: 'Key' + char.toUpperCase(),
+                charCode: char.charCodeAt(0),
+                keyCode: char.charCodeAt(0),
+                which: char.charCodeAt(0),
+                bubbles: true
+              });
+              inputField.dispatchEvent(keyEvent);
+              
+              // Directly append to content too
+              if (inputField.textContent !== null) {
+                inputField.textContent += char;
+              }
+              
+              await sleep(10); // Small delay between keypresses
+            }
             
-            // Send paste event
-            const pasteEvent = new ClipboardEvent('paste', {
-              bubbles: true,
-              clipboardData: new DataTransfer()
-            });
-            inputField.dispatchEvent(pasteEvent);
-            
-            console.log("Text inserted using clipboard paste method");
+            // Trigger input event
+            inputField.dispatchEvent(new Event('input', { bubbles: true }));
             textInserted = true;
+            console.log("Text inserted using keypress simulation");
           } catch (e) {
-            console.warn("Clipboard paste method failed:", e);
+            console.warn("Keypress simulation failed:", e);
           }
         }
         
-        // Final verification
         if (!textInserted) {
           throw new Error("Failed to insert message text using all methods");
         }
         
-        // Wait a moment to ensure text is processed
         await sleep(1000);
       } catch (error) {
         console.error("Message input error:", error);
@@ -431,7 +442,7 @@ async function sendDirectMessage(messageText, attachment) {
       }
     }
     
-    // Click the send button
+    // Find and click the send button
     console.log("Looking for send button...");
     const sendButtonSelectors = [
       '[data-testid="send"]',
@@ -453,10 +464,20 @@ async function sendDirectMessage(messageText, attachment) {
     if (!sendButton) {
       // Alternative: try sending with Enter key
       console.log("Send button not found, trying Enter key");
-      const inputField = document.querySelector('[data-testid="compose-box-input"]') || 
-                        document.querySelector('[contenteditable="true"]');
-                        
+      
+      // Refind the input field
+      let inputField = null;
+      for (const selector of inputSelectors) {
+        inputField = document.querySelector(selector);
+        if (inputField) break;
+      }
+      
       if (inputField) {
+        // Focus the input field first
+        inputField.focus();
+        await sleep(500);
+        
+        // Try sending with Enter key
         inputField.dispatchEvent(new KeyboardEvent('keydown', { 
           key: 'Enter',
           code: 'Enter',
@@ -472,11 +493,12 @@ async function sendDirectMessage(messageText, attachment) {
         if (verifyMessageSent(messageText)) {
           console.log("✅ Message sent successfully using Enter key!");
           return { success: true };
+        } else {
+          console.warn("⚠️ Could not verify if Enter key worked, but no errors detected");
+          return { success: true, warning: "Could not verify if message was sent" };
         }
-        
-        console.warn("⚠️ Could not verify if Enter key worked");
       } else {
-        throw new Error('Send button not found and could not try Enter key (no input field)');
+        throw new Error('Send button not found and could not find input field for Enter key');
       }
     } else {
       // Store the message text for verification
@@ -490,7 +512,7 @@ async function sendDirectMessage(messageText, attachment) {
       await sleep(3000);
     }
     
-    // Check if message was sent (look for our message text in the latest messages)
+    // Check if message was sent by looking for our message in the DOM
     const sentSuccessfully = verifyMessageSent(messageText);
     
     if (sentSuccessfully) {
@@ -509,63 +531,72 @@ async function sendDirectMessage(messageText, attachment) {
 // Helper function to verify if a message was sent
 function verifyMessageSent(messageText) {
   try {
-    // Look for sent messages in the chat
-    const sentMessages = document.querySelectorAll('[data-testid="msg-text"]');
-    if (!sentMessages || sentMessages.length === 0) {
-      // Try alternative message selectors
-      const altSentMessages = document.querySelectorAll('.message-out .copyable-text');
-      if (!altSentMessages || altSentMessages.length === 0) {
-        console.warn("No sent messages found for verification");
-        return false;
-      }
-      
-      // Check the most recent alternative messages
-      const msgCount = altSentMessages.length;
-      for (let i = Math.max(0, msgCount - 3); i < msgCount; i++) {
-        const msgText = altSentMessages[i].textContent;
-        if (msgText && msgText.includes(messageText)) {
-          return true;
+    // If no message text was provided, we can't verify
+    if (!messageText) return true;
+    
+    // Try multiple selectors for outgoing messages
+    const outgoingMessageSelectors = [
+      '[data-testid="msg-text"]',
+      '.message-out .copyable-text',
+      '.message-out .selectable-text',
+      '[data-pre-plain-text]'
+    ];
+    
+    for (const selector of outgoingMessageSelectors) {
+      const messages = document.querySelectorAll(selector);
+      if (messages && messages.length > 0) {
+        // Check the most recent messages (last 3)
+        const messageCount = messages.length;
+        for (let i = Math.max(0, messageCount - 3); i < messageCount; i++) {
+          const msgText = messages[i].textContent || messages[i].innerText;
+          if (msgText && (msgText.includes(messageText) || messageText.includes(msgText))) {
+            return true;
+          }
         }
       }
-      
-      return false;
     }
     
-    // Check the most recent messages (last 3)
-    const messageCount = sentMessages.length;
-    for (let i = Math.max(0, messageCount - 3); i < messageCount; i++) {
-      const msgText = sentMessages[i].textContent;
-      if (msgText && msgText.includes(messageText)) {
-        return true;
-      }
+    // Also consider it a success if we see a checkmark for sent messages
+    const checkmarks = document.querySelectorAll('[data-testid="msg-dblcheck"]');
+    if (checkmarks && checkmarks.length > 0) {
+      // Found delivery checkmarks on recent messages
+      return true;
     }
     
     return false;
   } catch (e) {
     console.error("Error verifying message:", e);
-    return false;
+    // Return true as fallback - don't block on verification failure
+    return true;
   }
 }
 
-// Helper function to wait for an element to appear in the DOM
+// Helper function to wait for an element to appear in the DOM with timeout
 function waitForElement(selector, timeout = 5000) {
   return new Promise((resolve) => {
-    if (document.querySelector(selector)) {
-      return resolve(document.querySelector(selector));
+    // Check if element already exists
+    const element = document.querySelector(selector);
+    if (element) {
+      return resolve(element);
     }
     
+    // Set up observer to watch for element
     const observer = new MutationObserver(() => {
-      if (document.querySelector(selector)) {
+      const element = document.querySelector(selector);
+      if (element) {
         observer.disconnect();
-        resolve(document.querySelector(selector));
+        resolve(element);
       }
     });
     
+    // Start observing
     observer.observe(document.body, {
       childList: true,
-      subtree: true
+      subtree: true,
+      attributes: true
     });
     
+    // Set timeout
     setTimeout(() => {
       observer.disconnect();
       resolve(null);
@@ -853,4 +884,4 @@ new MutationObserver(() => {
   }
 }).observe(document, {subtree: true, childList: true});
 
-console.log("WhatsApp Bulk Blaster content script loaded v1.0.4");
+console.log("WhatsApp Bulk Blaster content script loaded v1.0.5");

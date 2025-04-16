@@ -1,4 +1,3 @@
-
 // Listen for messages from content scripts and popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log("Background received message:", message);
@@ -83,7 +82,7 @@ async function sendBulkMessages(numbers, message, delay, attachment) {
       await chrome.tabs.update(whatsAppTab.id, { active: true });
       
       // Wait a moment to ensure the tab is ready
-      await new Promise(r => setTimeout(r, 1000));
+      await new Promise(r => setTimeout(r, 2000));
     } else {
       // Open WhatsApp Web if not already open
       whatsAppTab = await chrome.tabs.create({
@@ -92,8 +91,8 @@ async function sendBulkMessages(numbers, message, delay, attachment) {
       });
       console.log("Created new WhatsApp tab:", whatsAppTab.id);
       
-      // Wait for WhatsApp to load
-      await new Promise(r => setTimeout(r, 15000));
+      // Wait for WhatsApp to load - increased to 20 seconds
+      await new Promise(r => setTimeout(r, 20000));
     }
   } catch (error) {
     console.error("Error finding/creating WhatsApp tab:", error);
@@ -128,14 +127,18 @@ async function sendBulkMessages(numbers, message, delay, attachment) {
     try {
       console.log(`Processing number ${i+1}/${numbers.length}: ${number}`);
       
-      // Navigate to the specific chat in the existing WhatsApp tab
+      // Modified: Directly use the method that works most reliably - open wa.me links
+      const waLink = `https://web.whatsapp.com/send?phone=${number}&text=${encodeURIComponent(message || '')}`;
+      console.log("Opening direct wa.me link:", waLink);
+      
       await chrome.tabs.update(whatsAppTab.id, {
-        url: `https://web.whatsapp.com/send?phone=${number}`,
+        url: waLink,
         active: true
       });
       
-      // Wait longer for the chat to load properly (increased from 8000ms to 12000ms)
-      await new Promise(r => setTimeout(r, 12000));
+      // Increased wait time for chat to load properly - critical for message delivery
+      console.log("Waiting for chat to load...");
+      await new Promise(r => setTimeout(r, 15000));
       
       // Check if number is valid by looking for invalid number message
       let isValid = true;
@@ -152,6 +155,7 @@ async function sendBulkMessages(numbers, message, delay, attachment) {
             
             for (const text of invalidTexts) {
               if (document.body.textContent.includes(text)) {
+                console.error(`Invalid number detected: ${text}`);
                 return false;
               }
             }
@@ -181,46 +185,76 @@ async function sendBulkMessages(numbers, message, delay, attachment) {
       // Wait to ensure chat is fully loaded
       await new Promise(r => setTimeout(r, 3000));
       
-      // Send message directly using content script
+      // Send the message directly from background script to ensure delivery
       try {
-        console.log("Executing script to send message");
-        const messageData = {
-          message: message,
-          attachment: attachment
-        };
-        
-        // Send message via content script
-        const response = await new Promise((resolve) => {
-          chrome.tabs.sendMessage(whatsAppTab.id, {
-            action: "sendDirectMessage",
-            data: messageData
-          }, (result) => {
-            console.log("Received response from content script:", result);
-            resolve(result || { success: false, error: "No response from content script" });
-          });
-          
-          // Set a timeout in case the content script doesn't respond
-          setTimeout(() => {
-            console.warn("Content script response timeout");
-            resolve({ success: false, error: "Content script timeout" });
-          }, 30000); // Increased timeout to 30 seconds
+        // If we used wa.me link with text parameter, we just need to click send
+        const [sendResult] = await chrome.scripting.executeScript({
+          target: { tabId: whatsAppTab.id },
+          func: async () => {
+            try {
+              console.log("Looking for send button...");
+              // Try multiple send button selectors for reliability
+              const sendButtonSelectors = [
+                '[data-testid="send"]',
+                '[data-icon="send"]',
+                'span[data-icon="send"]',
+                'button[aria-label="Send"]'
+              ];
+              
+              let sendButton = null;
+              for (const selector of sendButtonSelectors) {
+                sendButton = document.querySelector(selector);
+                if (sendButton) {
+                  console.log("Found send button with selector:", selector);
+                  break;
+                }
+              }
+              
+              if (sendButton) {
+                console.log("Clicking send button");
+                sendButton.click();
+                return { success: true };
+              } else {
+                // Try alternative - press Enter key on message input
+                const inputField = document.querySelector('[data-testid="compose-box-input"]') || 
+                                  document.querySelector('[contenteditable="true"]');
+                                  
+                if (inputField) {
+                  console.log("Send button not found, triggering Enter keypress");
+                  inputField.dispatchEvent(new KeyboardEvent('keydown', { 
+                    key: 'Enter',
+                    code: 'Enter',
+                    keyCode: 13,
+                    which: 13,
+                    bubbles: true
+                  }));
+                  
+                  return { success: true };
+                }
+                
+                return { success: false, error: "No send button or input field found" };
+              }
+            } catch (e) {
+              console.error("Error sending message:", e);
+              return { success: false, error: e.toString() };
+            }
+          }
         });
         
-        // Log result
-        if (response && response.success) {
+        if (sendResult.result.success) {
           console.log(`Successfully sent message to ${number}`);
           results.push({ number, status: 'success' });
         } else {
-          console.log(`Failed to send message to ${number}:`, response?.error || 'Unknown error');
-          results.push({ number, status: 'failed', error: response?.error || 'Unknown error' });
+          console.error(`Failed to send message to ${number}:`, sendResult.result.error);
+          results.push({ number, status: 'failed', error: sendResult.result.error });
         }
       } catch (error) {
-        console.error("Error sending message:", error);
+        console.error("Error executing send script:", error);
         results.push({ number, status: 'failed', error: error.message });
       }
       
-      // Wait for the delay specified by user
-      await new Promise(r => setTimeout(r, delay * 1000));
+      // Wait for the delay specified by user + additional 2 seconds for reliability
+      await new Promise(r => setTimeout(r, (delay * 1000) + 2000));
       
     } catch (error) {
       console.error(`Error processing ${number}:`, error);
