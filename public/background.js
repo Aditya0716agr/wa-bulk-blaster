@@ -1,3 +1,4 @@
+
 // Listen for messages from content scripts and popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log("Background received message:", message);
@@ -63,7 +64,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 // Log that the background script has loaded
-console.log("WhatsApp Bulk Blaster background script loaded v1.0.3");
+console.log("WhatsApp Bulk Blaster background script loaded v1.0.4");
 
 // Function to send bulk messages
 async function sendBulkMessages(numbers, message, delay, attachment) {
@@ -77,16 +78,22 @@ async function sendBulkMessages(numbers, message, delay, attachment) {
     if (tabs.length > 0) {
       whatsAppTab = tabs[0];
       console.log("Found existing WhatsApp tab:", whatsAppTab.id);
+      
+      // Focus on the WhatsApp tab
+      await chrome.tabs.update(whatsAppTab.id, { active: true });
+      
+      // Wait a moment to ensure the tab is ready
+      await new Promise(r => setTimeout(r, 1000));
     } else {
       // Open WhatsApp Web if not already open
       whatsAppTab = await chrome.tabs.create({
         url: "https://web.whatsapp.com/",
-        active: false
+        active: true
       });
       console.log("Created new WhatsApp tab:", whatsAppTab.id);
       
       // Wait for WhatsApp to load
-      await new Promise(r => setTimeout(r, 10000));
+      await new Promise(r => setTimeout(r, 15000));
     }
   } catch (error) {
     console.error("Error finding/creating WhatsApp tab:", error);
@@ -124,11 +131,11 @@ async function sendBulkMessages(numbers, message, delay, attachment) {
       // Navigate to the specific chat in the existing WhatsApp tab
       await chrome.tabs.update(whatsAppTab.id, {
         url: `https://web.whatsapp.com/send?phone=${number}`,
-        active: false
+        active: true
       });
       
-      // Wait longer for the chat to load properly
-      await new Promise(r => setTimeout(r, 8000));
+      // Wait longer for the chat to load properly (increased from 8000ms to 12000ms)
+      await new Promise(r => setTimeout(r, 12000));
       
       // Check if number is valid by looking for invalid number message
       let isValid = true;
@@ -136,10 +143,29 @@ async function sendBulkMessages(numbers, message, delay, attachment) {
         const [validCheck] = await chrome.scripting.executeScript({
           target: { tabId: whatsAppTab.id },
           func: () => {
-            return !document.body.textContent.includes('phone number shared via link is not on WhatsApp');
+            // Check for any error messages in the page
+            const invalidTexts = [
+              'phone number shared via link is not on WhatsApp',
+              'invalid phone number',
+              'This person is not on WhatsApp'
+            ];
+            
+            for (const text of invalidTexts) {
+              if (document.body.textContent.includes(text)) {
+                return false;
+              }
+            }
+            
+            // Also check if we can find the chat input field as a positive signal
+            const chatInput = document.querySelector('[data-testid="compose-box-input"]') || 
+                             document.querySelector('[contenteditable="true"]');
+                             
+            return !!chatInput;
           }
         });
+        
         isValid = validCheck.result;
+        console.log(`Number ${number} validation check:`, isValid);
       } catch (e) {
         console.error("Error checking if number is valid:", e);
         isValid = false;
@@ -152,9 +178,11 @@ async function sendBulkMessages(numbers, message, delay, attachment) {
         continue;
       }
       
+      // Wait to ensure chat is fully loaded
+      await new Promise(r => setTimeout(r, 3000));
+      
       // Send message directly using content script
       try {
-        // Inject a script to send the message with attachment if provided
         console.log("Executing script to send message");
         const messageData = {
           message: message,
@@ -162,47 +190,29 @@ async function sendBulkMessages(numbers, message, delay, attachment) {
         };
         
         // Send message via content script
-        let sendResult;
-        
-        // First check if chat is loaded
-        const [chatLoadCheck] = await chrome.scripting.executeScript({
-          target: { tabId: whatsAppTab.id },
-          func: () => {
-            const inputField = document.querySelector('[data-testid="compose-box-input"]');
-            return !!inputField;
-          }
-        });
-        
-        if (!chatLoadCheck.result) {
-          console.log("Chat input not found, waiting longer...");
-          await new Promise(r => setTimeout(r, 5000));
-        }
-        
-        // Send message
         const response = await new Promise((resolve) => {
           chrome.tabs.sendMessage(whatsAppTab.id, {
             action: "sendDirectMessage",
             data: messageData
           }, (result) => {
+            console.log("Received response from content script:", result);
             resolve(result || { success: false, error: "No response from content script" });
           });
           
           // Set a timeout in case the content script doesn't respond
           setTimeout(() => {
+            console.warn("Content script response timeout");
             resolve({ success: false, error: "Content script timeout" });
-          }, 15000);
+          }, 30000); // Increased timeout to 30 seconds
         });
         
-        sendResult = response;
-        console.log("Send result:", sendResult);
-        
         // Log result
-        if (sendResult && sendResult.success) {
+        if (response && response.success) {
           console.log(`Successfully sent message to ${number}`);
           results.push({ number, status: 'success' });
         } else {
-          console.log(`Failed to send message to ${number}:`, sendResult?.error || 'Unknown error');
-          results.push({ number, status: 'failed', error: sendResult?.error || 'Unknown error' });
+          console.log(`Failed to send message to ${number}:`, response?.error || 'Unknown error');
+          results.push({ number, status: 'failed', error: response?.error || 'Unknown error' });
         }
       } catch (error) {
         console.error("Error sending message:", error);

@@ -1,3 +1,4 @@
+
 // Initialize when DOM is fully loaded
 document.addEventListener('DOMContentLoaded', init);
 window.addEventListener('load', init); // Add an additional listener for window.load
@@ -8,6 +9,7 @@ let floatingButton = null;
 let welcomeMessage = "Welcome to the group! We're glad to have you here.";
 let isInitialized = false;
 let lastMessageSent = null;
+let debugMode = true; // Enable debug mode
 
 // Get stored settings from storage
 chrome.storage.local.get(['autoReplyEnabled', 'welcomeMessage'], (result) => {
@@ -22,7 +24,7 @@ function init() {
   if (isInitialized) return;
   isInitialized = true;
   
-  console.log("🚀 WhatsApp Bulk Blaster content script initializing... v1.0.3");
+  console.log("🚀 WhatsApp Bulk Blaster content script initializing... v1.0.4");
   
   // Check if this is WhatsApp Web
   if (!window.location.href.includes('web.whatsapp.com')) {
@@ -223,16 +225,37 @@ async function sendDirectMessage(messageText, attachment) {
       throw new Error('Not in WhatsApp Web');
     }
     
+    // Check if the page has the invalid number message
+    if (document.body.textContent.includes('phone number shared via link is not on WhatsApp')) {
+      console.error("❌ Invalid phone number - not on WhatsApp");
+      return { success: false, error: 'Invalid number - not on WhatsApp' };
+    }
+    
+    // Wait longer for chat to load completely
+    console.log("Waiting for chat to load completely...");
+    await sleep(5000);
+    
     // Check if we're in a chat (look for chat input)
-    const inputField = await waitForElement('[data-testid="compose-box-input"]', 10000);
+    const inputField = await waitForElement('[data-testid="compose-box-input"]', 15000);
     if (!inputField) {
-      throw new Error('Message input not found - not in a chat');
+      // Try alternative selectors if the main one fails
+      const altInputField = document.querySelector('[contenteditable="true"]') || 
+                           document.querySelector('[role="textbox"]');
+      
+      if (!altInputField) {
+        console.error("❌ Message input not found after wait");
+        // Take a "screenshot" of the current DOM state for debugging
+        console.log("Current DOM state:", document.body.innerHTML.substring(0, 500) + "...");
+        throw new Error('Message input not found - not in a chat or WhatsApp Web structure changed');
+      }
+      
+      console.log("Found alternative input field", altInputField);
     }
     
     // Verify chat is loaded and ready for messages
-    const chatHeader = document.querySelector('[data-testid="conversation-header"]');
+    const chatHeader = await waitForElement('[data-testid="conversation-header"]', 5000);
     if (!chatHeader) {
-      throw new Error('Chat not fully loaded');
+      console.warn("⚠️ Chat header not found, but continuing anyway");
     }
     
     // Handle attachment if provided
@@ -241,14 +264,16 @@ async function sendDirectMessage(messageText, attachment) {
       try {
         // Click the attachment button
         const attachButton = await waitForElement('[data-testid="attach-menu-icon"]', 5000) || 
-                              await waitForElement('[data-icon="attach-menu-plus"]', 5000);
+                              await waitForElement('[data-icon="attach-menu-plus"]', 5000) ||
+                              document.querySelector('span[data-icon="attach"]');
         
         if (!attachButton) {
           throw new Error('Attachment button not found');
         }
         
+        console.log("Clicking attachment button");
         attachButton.click();
-        await sleep(1000);
+        await sleep(2000);
         
         // Create a blob from the base64 data
         const binaryString = atob(attachment.data.split(',')[1]);
@@ -261,9 +286,24 @@ async function sendDirectMessage(messageText, attachment) {
         // Create a File object from the Blob
         const file = new File([blob], attachment.name, { type: attachment.type });
         
-        // Find the document/photo input
-        const fileInputSelector = 'input[type="file"]';
-        const fileInput = document.querySelector(fileInputSelector);
+        // Find the document/photo input - try multiple selectors
+        const fileInputSelectors = [
+          'input[type="file"]',
+          'input[accept*="image"]',
+          'input[accept*="video"]',
+          'input[accept*="document"]'
+        ];
+        
+        let fileInput = null;
+        for (const selector of fileInputSelectors) {
+          const inputs = document.querySelectorAll(selector);
+          if (inputs.length > 0) {
+            // Prioritize the visible/active one
+            fileInput = inputs[0];
+            console.log("Found file input with selector:", selector);
+            break;
+          }
+        }
         
         if (!fileInput) {
           throw new Error('File input not found');
@@ -280,7 +320,7 @@ async function sendDirectMessage(messageText, attachment) {
         
         // Wait for attachment to upload
         console.log("Waiting for attachment to upload...");
-        await sleep(3000);
+        await sleep(5000);
         
         console.log("Attachment processed successfully");
       } catch (error) {
@@ -292,11 +332,33 @@ async function sendDirectMessage(messageText, attachment) {
     // Add text message if provided
     if (messageText) {
       try {
-        // Find the message input and add text
+        // Find the message input using multiple selectors
+        const inputSelectors = [
+          '[data-testid="compose-box-input"]',
+          '[contenteditable="true"]',
+          '[role="textbox"]',
+          '.copyable-text[contenteditable="true"]'
+        ];
+        
+        let inputField = null;
+        for (const selector of inputSelectors) {
+          const input = document.querySelector(selector);
+          if (input) {
+            inputField = input;
+            console.log("Found input field with selector:", selector);
+            break;
+          }
+        }
+        
+        if (!inputField) {
+          throw new Error('Message input not found');
+        }
+        
         console.log("Setting message text...");
         
         // Ensure the input is focused
         inputField.focus();
+        await sleep(500);
         
         // Try different methods to insert text
         let textInserted = false;
@@ -306,6 +368,7 @@ async function sendDirectMessage(messageText, attachment) {
           document.execCommand('insertText', false, messageText);
           
           // Verify text was inserted
+          await sleep(500);
           if (inputField.innerText || inputField.textContent) {
             textInserted = true;
             console.log("Text inserted using execCommand");
@@ -361,7 +424,7 @@ async function sendDirectMessage(messageText, attachment) {
         }
         
         // Wait a moment to ensure text is processed
-        await sleep(500);
+        await sleep(1000);
       } catch (error) {
         console.error("Message input error:", error);
         throw new Error('Failed to insert message: ' + error.message);
@@ -369,20 +432,63 @@ async function sendDirectMessage(messageText, attachment) {
     }
     
     // Click the send button
-    console.log("Clicking send button...");
-    const sendButton = await waitForElement('[data-testid="send"]', 5000);
-    if (!sendButton) {
-      throw new Error('Send button not found');
+    console.log("Looking for send button...");
+    const sendButtonSelectors = [
+      '[data-testid="send"]',
+      '[data-icon="send"]',
+      'span[data-icon="send"]',
+      'button[aria-label="Send"]',
+      'button.send'
+    ];
+    
+    let sendButton = null;
+    for (const selector of sendButtonSelectors) {
+      sendButton = await waitForElement(selector, 2000);
+      if (sendButton) {
+        console.log("Found send button with selector:", selector);
+        break;
+      }
     }
     
-    // Store the message text for verification
-    lastMessageSent = messageText;
-    
-    // Click send button
-    sendButton.click();
-    
-    // Wait to see if message appears in chat
-    await sleep(2000);
+    if (!sendButton) {
+      // Alternative: try sending with Enter key
+      console.log("Send button not found, trying Enter key");
+      const inputField = document.querySelector('[data-testid="compose-box-input"]') || 
+                        document.querySelector('[contenteditable="true"]');
+                        
+      if (inputField) {
+        inputField.dispatchEvent(new KeyboardEvent('keydown', { 
+          key: 'Enter',
+          code: 'Enter',
+          keyCode: 13,
+          which: 13,
+          bubbles: true
+        }));
+        
+        // Wait to see if message went through
+        await sleep(2000);
+        
+        // If we can verify sent messages, check if our message was sent
+        if (verifyMessageSent(messageText)) {
+          console.log("✅ Message sent successfully using Enter key!");
+          return { success: true };
+        }
+        
+        console.warn("⚠️ Could not verify if Enter key worked");
+      } else {
+        throw new Error('Send button not found and could not try Enter key (no input field)');
+      }
+    } else {
+      // Store the message text for verification
+      lastMessageSent = messageText;
+      
+      // Click send button
+      console.log("Clicking send button");
+      sendButton.click();
+      
+      // Wait to see if message appears in chat
+      await sleep(3000);
+    }
     
     // Check if message was sent (look for our message text in the latest messages)
     const sentSuccessfully = verifyMessageSent(messageText);
@@ -391,7 +497,7 @@ async function sendDirectMessage(messageText, attachment) {
       console.log("✅ Message sent successfully!");
       return { success: true };
     } else {
-      console.warn("⚠️ Could not verify message was sent");
+      console.warn("⚠️ Could not verify message was sent, but no errors occurred");
       return { success: true, warning: "Could not verify message was sent" };
     }
   } catch (error) {
@@ -405,7 +511,25 @@ function verifyMessageSent(messageText) {
   try {
     // Look for sent messages in the chat
     const sentMessages = document.querySelectorAll('[data-testid="msg-text"]');
-    if (!sentMessages || sentMessages.length === 0) return false;
+    if (!sentMessages || sentMessages.length === 0) {
+      // Try alternative message selectors
+      const altSentMessages = document.querySelectorAll('.message-out .copyable-text');
+      if (!altSentMessages || altSentMessages.length === 0) {
+        console.warn("No sent messages found for verification");
+        return false;
+      }
+      
+      // Check the most recent alternative messages
+      const msgCount = altSentMessages.length;
+      for (let i = Math.max(0, msgCount - 3); i < msgCount; i++) {
+        const msgText = altSentMessages[i].textContent;
+        if (msgText && msgText.includes(messageText)) {
+          return true;
+        }
+      }
+      
+      return false;
+    }
     
     // Check the most recent messages (last 3)
     const messageCount = sentMessages.length;
@@ -729,4 +853,4 @@ new MutationObserver(() => {
   }
 }).observe(document, {subtree: true, childList: true});
 
-console.log("WhatsApp Bulk Blaster content script loaded v1.0.3");
+console.log("WhatsApp Bulk Blaster content script loaded v1.0.4");

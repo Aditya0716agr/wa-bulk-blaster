@@ -100,16 +100,27 @@ export function ensureWhatsAppWebIsOpen(): Promise<boolean> {
     // Check if WhatsApp Web is already open
     window.chrome.tabs.query({ url: "https://web.whatsapp.com/*" }).then(tabs => {
       if (tabs.length > 0) {
-        // WhatsApp is already open
+        // WhatsApp is already open, focus on that tab
         debugLog('info', "WhatsApp Web is already open");
         if (tabs[0].id) {
-          // Create a new tab with the tab ID
+          window.chrome.tabs.update(tabs[0].id, { active: true }).then(() => {
+            showToast("info", "WhatsApp Web tab activated", {
+              description: "Please ensure you're logged in before sending messages"
+            });
+            resolve(true);
+          });
+        } else {
+          // Fallback to creating a new tab
           window.chrome.tabs.create({
-            url: tabs[0].url || "https://web.whatsapp.com/",
+            url: "https://web.whatsapp.com/",
             active: true
+          }).then(() => {
+            showToast("info", "WhatsApp Web opened", {
+              description: "Please ensure you're logged in before sending messages"
+            });
+            resolve(true);
           });
         }
-        resolve(true);
       } else {
         // Open WhatsApp Web
         debugLog('info', "Opening WhatsApp Web");
