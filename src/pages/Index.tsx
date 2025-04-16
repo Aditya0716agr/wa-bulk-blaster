@@ -13,6 +13,8 @@ import GroupMessaging from "@/components/GroupMessaging";
 import WelcomeSettings from "@/components/WelcomeSettings";
 import LabelMessaging from "@/components/LabelMessaging";
 import { ChromeApi } from "@/lib/chrome.d";
+import { motion } from "framer-motion";
+import { fadeIn, slideIn, MotionDiv, MotionCard, MotionButton } from "@/components/ui/motion";
 
 declare global {
   interface Window {
@@ -345,26 +347,48 @@ const Index = () => {
   };
 
   return (
-    <div className="min-h-[500px] min-w-[350px] p-4 bg-gradient-to-br from-purple-50 to-white">
-      <div className="mb-4 flex items-center justify-center space-x-2">
-        <img src="/icon48.png" alt="WhatsApp Bulk Blaster" className="w-8 h-8" />
-        <h1 className="text-xl font-bold text-purple-800">WhatsApp Bulk Blaster</h1>
-      </div>
+    <MotionDiv
+      className="min-h-[500px] min-w-[350px] p-4 bg-gradient-to-br from-purple-50 to-white"
+      initial="initial"
+      animate="animate"
+      variants={fadeIn}
+    >
+      <motion.div 
+        className="mb-4 flex items-center justify-center space-x-2"
+        variants={slideIn}
+      >
+        <motion.img 
+          src="/icon48.png" 
+          alt="WhatsApp Bulk Blaster" 
+          className="w-8 h-8"
+          whileHover={{ scale: 1.1, rotate: 10 }}
+          whileTap={{ scale: 0.9 }}
+        />
+        <motion.h1 
+          className="text-xl font-bold bg-gradient-to-r from-purple-600 to-purple-800 bg-clip-text text-transparent"
+          whileHover={{ scale: 1.05 }}
+        >
+          WhatsApp Bulk Blaster
+        </motion.h1>
+      </motion.div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-6 mb-4">
-          <TabsTrigger value="bulk-message">Bulk</TabsTrigger>
-          <TabsTrigger value="group-message">Groups</TabsTrigger>
-          <TabsTrigger value="label-message">Labels</TabsTrigger>
-          <TabsTrigger value="auto-reply">Reply</TabsTrigger>
-          <TabsTrigger value="welcome">Welcome</TabsTrigger>
-          <TabsTrigger value="export">Export</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-6 mb-4 bg-purple-50">
+          {["bulk-message", "group-message", "label-message", "auto-reply", "welcome", "export"].map((tab) => (
+            <TabsTrigger
+              key={tab}
+              value={tab}
+              className="data-[state=active]:bg-purple-600 data-[state=active]:text-white"
+            >
+              {tab.split('-')[0].charAt(0).toUpperCase() + tab.split('-')[0].slice(1)}
+            </TabsTrigger>
+          ))}
         </TabsList>
         
         <TabsContent value="bulk-message" className="space-y-4">
-          <Card>
+          <MotionCard variants={fadeIn}>
             <CardHeader>
-              <CardTitle>Send Bulk Messages</CardTitle>
+              <CardTitle className="text-purple-800">Send Bulk Messages</CardTitle>
               <CardDescription>
                 Send the same message to multiple WhatsApp contacts
               </CardDescription>
@@ -491,32 +515,56 @@ const Index = () => {
               </Button>
             </CardContent>
             <CardFooter>
-              <Button 
-                className="w-full bg-purple-700 hover:bg-purple-800"
+              <MotionButton
+                className="w-full bg-purple-600 hover:bg-purple-700 text-white"
                 onClick={handleSendBulkMessages}
                 disabled={sending || (!message.trim() && !attachment) || !numbers.trim()}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
               >
                 <Send className="mr-2 h-4 w-4" /> Send Bulk Messages
-              </Button>
+              </MotionButton>
             </CardFooter>
-          </Card>
+          </MotionCard>
           
           {logs.length > 0 && (
-            <Card>
+            <MotionCard variants={fadeIn}>
               <CardHeader>
                 <CardTitle>Send Results</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="max-h-[150px] overflow-y-auto text-sm">
+                <motion.div 
+                  className="max-h-[150px] overflow-y-auto text-sm space-y-2"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ staggerChildren: 0.1 }}
+                >
                   {logs.map((log, index) => (
-                    <div key={index} className={`mb-1 p-1 rounded flex justify-between ${log.status === 'success' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                    <motion.div
+                      key={index}
+                      className={`mb-1 p-2 rounded-lg flex justify-between items-center ${
+                        log.status === 'success' 
+                          ? 'bg-green-50 text-green-700 border border-green-200' 
+                          : 'bg-red-50 text-red-700 border border-red-200'
+                      }`}
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: index * 0.1 }}
+                    >
                       <span>{log.number}</span>
-                      <span className="font-semibold">{log.status}</span>
-                    </div>
+                      <span className="font-semibold flex items-center">
+                        {log.status === 'success' ? (
+                          <CheckCircle className="w-4 h-4 mr-1" />
+                        ) : (
+                          <AlertCircle className="w-4 h-4 mr-1" />
+                        )}
+                        {log.status}
+                      </span>
+                    </motion.div>
                   ))}
-                </div>
+                </motion.div>
               </CardContent>
-            </Card>
+            </MotionCard>
           )}
         </TabsContent>
         
@@ -529,7 +577,7 @@ const Index = () => {
         </TabsContent>
         
         <TabsContent value="auto-reply">
-          <Card>
+          <MotionCard>
             <CardHeader>
               <CardTitle>Auto Reply Bot</CardTitle>
               <CardDescription>
@@ -572,7 +620,7 @@ const Index = () => {
                 Note: WhatsApp Web must be open in a browser tab for this feature to work
               </p>
             </CardContent>
-          </Card>
+          </MotionCard>
         </TabsContent>
         
         <TabsContent value="welcome">
@@ -580,7 +628,7 @@ const Index = () => {
         </TabsContent>
         
         <TabsContent value="export">
-          <Card>
+          <MotionCard>
             <CardHeader>
               <CardTitle>Export Contacts</CardTitle>
               <CardDescription>
@@ -593,21 +641,26 @@ const Index = () => {
               </p>
             </CardContent>
             <CardFooter>
-              <Button
+              <MotionButton
                 className="w-full bg-purple-700 hover:bg-purple-800"
                 onClick={handleExportContacts}
               >
                 <Download className="mr-2 h-4 w-4" /> Export Contacts
-              </Button>
+              </MotionButton>
             </CardFooter>
-          </Card>
+          </MotionCard>
         </TabsContent>
       </Tabs>
       
-      <footer className="mt-4 text-center text-xs text-muted-foreground">
+      <motion.footer 
+        className="mt-4 text-center text-xs text-purple-600"
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.5 }}
+      >
         WhatsApp Bulk Blaster &copy; {new Date().getFullYear()}
-      </footer>
-    </div>
+      </motion.footer>
+    </MotionDiv>
   );
 };
 
