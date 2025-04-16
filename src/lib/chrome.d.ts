@@ -31,10 +31,21 @@ export interface ChromeScripting {
   }) => Promise<any[]>;
 }
 
+export interface TabQueryInfo {
+  active?: boolean;
+  url?: string | string[];
+}
+
+export interface ChromeTab {
+  id: number;
+  url?: string;
+  active?: boolean;
+}
+
 export interface ChromeTabs {
-  create: (options: { url: string; active?: boolean }) => Promise<{ id: number }>;
+  create: (options: { url: string; active?: boolean }) => Promise<ChromeTab>;
   remove: (tabId: number) => Promise<void>;
-  query: (queryInfo: { url?: string }) => Promise<{ id: number }[]>;
+  query: (queryInfo: TabQueryInfo) => Promise<ChromeTab[]>;
   executeScript?: (tabId: number, details: { code: string }) => Promise<any[]>;
 }
 

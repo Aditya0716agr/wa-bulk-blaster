@@ -91,18 +91,24 @@ export function validateWhatsAppNumber(number: string): boolean {
 // Function to handle WhatsApp Web initialization
 export function ensureWhatsAppWebIsOpen(): Promise<boolean> {
   return new Promise((resolve) => {
-    if (!window.chrome?.tabs) {
+    if (typeof window === 'undefined' || !window.chrome?.tabs) {
       debugLog('error', "Chrome tabs API not available");
       resolve(false);
       return;
     }
 
     // Check if WhatsApp Web is already open
-    window.chrome.tabs.query({ url: "https://web.whatsapp.com/*" }, (tabs) => {
+    window.chrome.tabs.query({ url: "https://web.whatsapp.com/*" }).then(tabs => {
       if (tabs.length > 0) {
         // WhatsApp is already open
         debugLog('info', "WhatsApp Web is already open");
-        window.chrome.tabs.update(tabs[0].id, { active: true });
+        if (tabs[0].id) {
+          // Create a new tab with the tab ID
+          window.chrome.tabs.create({
+            url: tabs[0].url || "https://web.whatsapp.com/",
+            active: true
+          });
+        }
         resolve(true);
       } else {
         // Open WhatsApp Web
@@ -110,7 +116,7 @@ export function ensureWhatsAppWebIsOpen(): Promise<boolean> {
         window.chrome.tabs.create({ 
           url: "https://web.whatsapp.com/",
           active: true
-        }, () => {
+        }).then(() => {
           showToast("info", "WhatsApp Web opened", {
             description: "Please ensure you're logged in before sending messages"
           });

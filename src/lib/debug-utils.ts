@@ -43,13 +43,14 @@ export function debugToast(message: string, data?: any) {
 
 // Function to check if WhatsApp is open and user is logged in
 export async function checkWhatsAppStatus(): Promise<{isOpen: boolean, isLoggedIn: boolean}> {
-  if (!window.chrome?.runtime?.sendMessage) {
+  if (typeof window === 'undefined' || !window.chrome?.runtime?.sendMessage) {
     return { isOpen: false, isLoggedIn: false };
   }
   
   // Check if WhatsApp Web is open in any tab
   try {
-    const tabs = await chrome.tabs.query({ url: "https://web.whatsapp.com/*" });
+    // Access chrome API through window.chrome
+    const tabs = await window.chrome.tabs.query({ url: "https://web.whatsapp.com/*" });
     const isOpen = tabs.length > 0;
     
     if (!isOpen) {
@@ -59,7 +60,11 @@ export async function checkWhatsAppStatus(): Promise<{isOpen: boolean, isLoggedI
     
     // If WhatsApp is open, check if user is logged in
     const tab = tabs[0];
-    const [results] = await chrome.scripting.executeScript({
+    if (!tab.id) {
+      return { isOpen: true, isLoggedIn: false };
+    }
+    
+    const results = await window.chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: () => {
         // Check for login indicators
@@ -69,7 +74,7 @@ export async function checkWhatsAppStatus(): Promise<{isOpen: boolean, isLoggedI
       }
     });
     
-    const isLoggedIn = results.result?.isLoggedIn || false;
+    const isLoggedIn = results[0]?.result?.isLoggedIn || false;
     debugLog('info', `WhatsApp status: isOpen=${isOpen}, isLoggedIn=${isLoggedIn}`);
     
     return { isOpen, isLoggedIn };
@@ -81,7 +86,7 @@ export async function checkWhatsAppStatus(): Promise<{isOpen: boolean, isLoggedI
 
 // Function to directly open a WhatsApp chat for testing
 export function openWhatsAppChat(number: string) {
-  if (!window.chrome?.tabs?.create) {
+  if (typeof window === 'undefined' || !window.chrome?.tabs) {
     debugLog('error', 'Chrome API not available');
     return;
   }
