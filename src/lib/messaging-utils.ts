@@ -1,3 +1,4 @@
+
 import { showToast } from "./toast-utils";
 import { debugLog } from "./debug-utils";
 
@@ -103,7 +104,7 @@ export function ensureWhatsAppWebIsOpen(): Promise<boolean> {
         debugLog('info', "WhatsApp Web is already open");
         if (tabs[0].id) {
           // Fixed: Use window.chrome to access chrome API correctly
-          chrome.tabs.update(tabs[0].id, { active: true })
+          window.chrome.tabs.update(tabs[0].id, { active: true })
             .then(() => {
               showToast("info", "WhatsApp Web tab activated", {
                 description: "Please ensure you're logged in before sending messages"
